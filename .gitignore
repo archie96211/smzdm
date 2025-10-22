@@ -1,0 +1,77 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+PIPFILE.lock
+
+# Virtual Environment
+.venv/
+venv/
+env/
+ENV/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# Runtime data
+data/
+smzdm_monitor.db
+node_modules/
+frontend/node_modules/
+wechat_bridge/smzdm_wechat_bridge.exe
+
+# IDE
+.vscode/
+.idea/
+.windsurfrules
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Configuration files with sensitive data
+secret.py
+config.py
+
+# Test files
+test.db
+test_*.py
+
+# Temporary files
+*.tmp
+*.temp
+
+# Nested git repositories
+smzdm-scutjcfeng/
+zdm/

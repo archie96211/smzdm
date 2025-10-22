@@ -1,0 +1,8 @@
+github.com/fastclaw-ai/weclaw v0.0.0-20260330150857-10711d0c6b7e h1:JSztz9CXq9qCijFNNY5oGMZtNE2Nud7DZu8oECLfLNA=
+github.com/fastclaw-ai/weclaw v0.0.0-20260330150857-10711d0c6b7e/go.mod h1:EdMXq3nsKTGrQibKXhqqVns/+oBinkKY1XfpN0W4uto=
+github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
+github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
+github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e h1:MRM5ITcdelLK2j1vwZ3Je0FKVCfqOLp5zO6trqMLYs0=
+github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e/go.mod h1:XV66xRDqSt+GTGFMVlhk3ULuV0y9ZmzeVGR4mloJI3M=
+golang.org/x/net v0.52.0 h1:He/TN1l0e4mmR3QqHMT2Xab3Aj3L9qjbhRm78/6jrW0=
+golang.org/x/net v0.52.0/go.mod h1:R1MAz7uMZxVMualyPXb+VaqGSa3LIaUqk0eEt3w36Sw=
