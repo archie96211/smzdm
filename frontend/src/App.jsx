@@ -340,6 +340,11 @@ function DetailView({ detail, selectedRuntime, wechatAccounts, globalWebhook, on
             <Button variant="outline" size="sm" onClick={onOpenWechat}>
               <MessageCircle size={14} /> 绑定微信
             </Button>
+            <Separator orientation="vertical" className="h-6" />
+            <div className="flex items-center gap-2">
+              <span className={`flex size-2.5 rounded-full ${detail.wxpusher_enabled ? "bg-green-500" : "bg-muted-foreground/40"}`} />
+              <span className="text-sm">{detail.wxpusher_enabled ? "WxPusher 已启用" : "WxPusher 未启用"}</span>
+            </div>
           </div>
         </CardContent>
       </Card>

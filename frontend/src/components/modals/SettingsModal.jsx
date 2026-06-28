@@ -5,17 +5,20 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useGlobalSettings, useUpdateSettings, useRestartServer } from "@/helpers/api";
+import { useGlobalSettings, useUpdateSettings, useRestartServer, useTestWxPusher } from "@/helpers/api";
 import { toast } from "sonner";
 
 export default function SettingsModal({ onClose }) {
   const { data: settings } = useGlobalSettings();
   const updateSettingsMut = useUpdateSettings();
   const restartServerMut = useRestartServer();
+  const testWxPusherMut = useTestWxPusher();
   const [form, setForm] = useState({
     image_server_host: "127.0.0.1",
     image_server_port: 18080,
     server_port: 18080,
+    wxpusher_app_token: "",
+    wxpusher_uid: "",
   });
   const [restarting, setRestarting] = useState(false);
 
@@ -25,6 +28,8 @@ export default function SettingsModal({ onClose }) {
         image_server_host: settings.image_server_host?.value || "127.0.0.1",
         image_server_port: Number(settings.image_server_port?.value || 18080),
         server_port: Number(settings.server_port?.value || 18080),
+        wxpusher_app_token: settings.wxpusher_app_token?.value || "",
+        wxpusher_uid: settings.wxpusher_uid?.value || "",
       });
     }
   }, [settings]);
@@ -37,6 +42,8 @@ export default function SettingsModal({ onClose }) {
         ...form,
         dingtalk_webhook: settings?.dingtalk_webhook?.value || "",
         dingtalk_secret: settings?.dingtalk_secret?.value || "",
+        wxpusher_app_token: form.wxpusher_app_token || "",
+        wxpusher_uid: form.wxpusher_uid || "",
       });
 
       if (portChanged) {
@@ -110,6 +117,37 @@ export default function SettingsModal({ onClose }) {
             钉钉卡片里的商品图会先缓存到本机，再使用这里配置的公网 IP 生成图片链接。
             腾讯云服务器会自动尝试识别公网 IP，请确保该端口能被钉钉访问。
           </p>
+          <div className="col-span-2 mt-2 border-t border-border pt-4">
+            <h3 className="text-sm font-semibold mb-3">WxPusher 全局配置</h3>
+            <div className="grid gap-2">
+              <Label>AppToken</Label>
+              <Input value={form.wxpusher_app_token}
+                onChange={(e) => setForm({ ...form, wxpusher_app_token: e.target.value })}
+                placeholder="AT_xxxxxxxxxxxxxxxx"
+                disabled={restarting} />
+              <Label>UID</Label>
+              <Input value={form.wxpusher_uid}
+                onChange={(e) => setForm({ ...form, wxpusher_uid: e.target.value })}
+                placeholder="UID_xxxxxxxxxxxxxxxx"
+                disabled={restarting} />
+              <Button type="button" variant="outline" size="sm" className="mt-1"
+                disabled={restarting || testWxPusherMut.isPending || !form.wxpusher_app_token || !form.wxpusher_uid}
+                onClick={async () => {
+                  try {
+                    const res = await testWxPusherMut.mutateAsync({
+                      app_token: form.wxpusher_app_token,
+                      uid: form.wxpusher_uid,
+                    });
+                    if (res.success) toast.success(res.message);
+                    else toast.warning(res.message);
+                  } catch (e) {
+                    toast.error(`测试失败：${e.message}`);
+                  }
+                }}>
+                {testWxPusherMut.isPending ? "测试中..." : "发送测试"}
+              </Button>
+            </div>
+          </div>
           <DialogFooter className="col-span-2 mt-2">
             <Button type="button" variant="outline" onClick={onClose} disabled={restarting}>取消</Button>
             <Button type="submit" disabled={restarting || updateSettingsMut.isPending}>

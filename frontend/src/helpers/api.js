@@ -173,6 +173,12 @@ export function useTestWechat() {
   });
 }
 
+export function useTestWxPusher() {
+  return useMutation({
+    mutationFn: ({ app_token, uid }) => apiRequest('/api/test-wxpusher', { method: 'POST', body: JSON.stringify({ app_token, uid }) }),
+  });
+}
+
 export function useUpdateSettings() {
   const qc = useQueryClient();
   return useMutation({

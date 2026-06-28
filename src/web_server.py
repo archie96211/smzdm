@@ -20,6 +20,7 @@ from .dingtalk_notifier import DingTalkNotifier
 from .monitor import SMZDMMonitor
 from .network_utils import detect_public_ipv4, is_loopback_host
 from .wechat_bridge_manager import WeChatBridgeManager
+from .wxpusher_notifier import WxPusherNotifier
 
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,9 @@ class SchemeCreate(BaseModel):
     wechat_enabled: bool = False
     wechat_account_id: str = ""
     wechat_targets: str = ""
+    wxpusher_enabled: bool = False
+    wxpusher_app_token: str = ""
+    wxpusher_uid: str = ""
 
 
 class SchemeUpdate(BaseModel):
@@ -58,6 +62,9 @@ class SchemeUpdate(BaseModel):
     wechat_enabled: Optional[bool] = None
     wechat_account_id: Optional[str] = None
     wechat_targets: Optional[str] = None
+    wxpusher_enabled: Optional[bool] = None
+    wxpusher_app_token: Optional[str] = None
+    wxpusher_uid: Optional[str] = None
     is_active: Optional[bool] = None
 
 
@@ -102,6 +109,13 @@ class GlobalSettingsUpdate(BaseModel):
     server_port: int = Field(default=18080, ge=1, le=65535)
     dingtalk_webhook: str = Field(default="")
     dingtalk_secret: str = Field(default="")
+    wxpusher_app_token: str = Field(default="")
+    wxpusher_uid: str = Field(default="")
+
+
+class TestWxPusherRequest(BaseModel):
+    app_token: str
+    uid: str
 
 
 async def send_scheme_configured_notice(scheme_id: int) -> None:
@@ -148,6 +162,22 @@ async def send_scheme_configured_notice(scheme_id: int) -> None:
             })
         except Exception:
             logger.exception("Failed to send WeChat scheme configured notice")
+
+    if scheme.get("wxpusher_enabled"):
+        wxpusher_token = scheme.get("wxpusher_app_token") or db.get_config("wxpusher_app_token") or ""
+        wxpusher_uid = scheme.get("wxpusher_uid") or db.get_config("wxpusher_uid") or ""
+        if wxpusher_token and wxpusher_uid:
+            try:
+                wxpusher_notifier = WxPusherNotifier()
+                await wxpusher_notifier.send_markdown(
+                    app_token=wxpusher_token,
+                    title=title,
+                    text=text,
+                    uid=wxpusher_uid,
+                )
+                await wxpusher_notifier.close()
+            except Exception:
+                logger.exception("Failed to send WxPusher scheme configured notice")
 
 
 def configure_runtime(host: str, port: int, auto_start: bool = True) -> None:
@@ -335,6 +365,9 @@ async def create_scheme(scheme: SchemeCreate):
             wechat_enabled=scheme.wechat_enabled,
             wechat_account_id=scheme.wechat_account_id.strip(),
             wechat_targets=wechat_targets,
+            wxpusher_enabled=scheme.wxpusher_enabled,
+            wxpusher_app_token=scheme.wxpusher_app_token.strip(),
+            wxpusher_uid=scheme.wxpusher_uid.strip(),
         )
         db.add_keyword(scheme_id, initial_keyword)
         await send_scheme_configured_notice(scheme_id)
@@ -519,6 +552,17 @@ async def test_wechat(request: TestWeChatRequest):
         return {"success": bool(data.get("success")), "message": "微信测试发送成功", "data": data}
     except Exception as exc:
         return {"success": False, "message": f"微信测试发送失败: {exc}"}
+
+
+@app.post("/api/test-wxpusher")
+async def test_wxpusher(request: TestWxPusherRequest):
+    try:
+        wxpusher = WxPusherNotifier()
+        result = await wxpusher.test_push(request.app_token.strip(), request.uid.strip())
+        await wxpusher.close()
+        return {"success": result, "message": "测试成功" if result else "测试失败"}
+    except Exception as exc:
+        return {"success": False, "message": f"测试失败: {exc}"}
 
 
 @app.get("/api/system/info")

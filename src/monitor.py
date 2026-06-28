@@ -18,6 +18,7 @@ from .dingtalk_notifier import DingTalkNotifier
 from .image_cache import ImageCache
 from .network_utils import is_public_host as host_is_public, is_public_url as url_is_public
 from .wechat_notifier import WeChatNotifier
+from .wxpusher_notifier import WxPusherNotifier
 from . import runtime
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ class SMZDMMonitor:
             bridge_url=os.getenv("WECHAT_BRIDGE_URL", "http://127.0.0.1:18012"),
             token=os.getenv("WECHAT_BRIDGE_TOKEN", ""),
         )
+        self.wxpusher_notifier = WxPusherNotifier()
         self.image_cache = ImageCache(db_path=db_path)
         self.api_base_url = os.getenv("SMZDM_API_BASE_URL", "https://api.smzdm.com/v1/list")
         self.running = False
@@ -315,7 +317,7 @@ class SMZDMMonitor:
                     if not self.running or scheme_id not in self.tasks:
                         break
 
-                    if all_new_products and (scheme.get('dingtalk_webhook') or scheme.get('wechat_enabled')):
+                    if all_new_products and (scheme.get('dingtalk_webhook') or scheme.get('wechat_enabled') or scheme.get('wxpusher_enabled')):
                         await self.send_notifications(scheme, all_new_products)
 
                     if not self.running or scheme_id not in self.tasks:
@@ -337,8 +339,11 @@ class SMZDMMonitor:
     async def send_notifications(self, scheme: Dict, products: List[Dict]):
         """Send configured DingTalk and WeChat notifications."""
         global_webhook = self.db.get_config('dingtalk_webhook') or ''
+        global_wxpusher_token = self.db.get_config('wxpusher_app_token') or ''
+        global_wxpusher_uid = self.db.get_config('wxpusher_uid') or ''
         has_dingtalk = scheme.get('dingtalk_webhook') or global_webhook
-        if not has_dingtalk and not scheme.get('wechat_enabled'):
+        has_wxpusher = scheme.get('wxpusher_enabled') and (scheme.get('wxpusher_app_token') or global_wxpusher_token) and (scheme.get('wxpusher_uid') or global_wxpusher_uid)
+        if not has_dingtalk and not scheme.get('wechat_enabled') and not has_wxpusher:
             return
 
         try:
@@ -449,6 +454,28 @@ class SMZDMMonitor:
                                     logger.debug("Failed to send DingTalk alert for WeChat failure", exc_info=True)
                         elif success:
                             self._wechat_alert_sent = False
+
+                    if scheme.get('wxpusher_enabled'):
+                        wxpusher_token = scheme.get('wxpusher_app_token') or global_wxpusher_token
+                        wxpusher_uid = scheme.get('wxpusher_uid') or global_wxpusher_uid
+                        if wxpusher_token and wxpusher_uid:
+                            wxpusher_markdown = "\n".join(message_parts)
+                            wxpusher_summary = f"{product_title} {price_text}"
+                            success = await self.wxpusher_notifier.send_markdown(
+                                app_token=wxpusher_token,
+                                title=card_title,
+                                text=wxpusher_markdown,
+                                uid=wxpusher_uid,
+                                url=article_url if article_url else "",
+                            )
+                            self.db.add_notification_log(
+                                scheme['id'],
+                                product.get('db_id'),
+                                'wxpusher',
+                                'success' if success else 'failed',
+                                '' if success else 'send failed',
+                            )
+                            sent_success = sent_success or success
 
                     if sent_success:
                         self.db.mark_as_notified(product.get('db_id'))

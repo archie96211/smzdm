@@ -15,6 +15,7 @@ const DEFAULT_SCHEME = {
   name: "", keyword: "", refresh_interval: 60,
   dingtalk_webhook: "", dingtalk_secret: "",
   wechat_enabled: false, wechat_account_id: "", wechat_targets: "",
+  wxpusher_enabled: false, wxpusher_app_token: "", wxpusher_uid: "",
   is_active: true,
 };
 
@@ -27,6 +28,8 @@ function formatConversation(conversation) {
 export default function SchemeModal({ mode, initial, onSubmit, onClose, wechatConversations = [], wechatAccount = null }) {
   const { data: globalSettings } = useGlobalSettings();
   const globalWebhook = globalSettings?.dingtalk_webhook?.value || "";
+  const globalWxPusherToken = globalSettings?.wxpusher_app_token?.value || "";
+  const globalWxPusherUid = globalSettings?.wxpusher_uid?.value || "";
   const isCreate = mode === "create";
   const wechatReady = Boolean(wechatAccount && wechatConversations.length > 0);
   const [form, setForm] = useState({
@@ -38,6 +41,10 @@ export default function SchemeModal({ mode, initial, onSubmit, onClose, wechatCo
     isCreate ? Boolean(globalWebhook) : Boolean(initial?.dingtalk_webhook || initial?.dingtalk_secret)
   );
   const [useCustomWebhook, setUseCustomWebhook] = useState(Boolean(initial?.dingtalk_webhook));
+  const [wxpusherEnabled, setWxpusherEnabled] = useState(
+    isCreate ? Boolean(globalWxPusherToken && globalWxPusherUid) : Boolean(initial?.wxpusher_enabled)
+  );
+  const [useCustomWxPusher, setUseCustomWxPusher] = useState(Boolean(initial?.wxpusher_app_token));
   const title = mode === "edit" ? "编辑监控方案" : "新建监控方案";
 
   useEffect(() => {
@@ -56,6 +63,9 @@ export default function SchemeModal({ mode, initial, onSubmit, onClose, wechatCo
       wechat_enabled: Boolean(form.wechat_enabled),
       wechat_account_id: String(form.wechat_account_id || "").trim(),
       wechat_targets: Boolean(form.wechat_enabled) ? String(form.wechat_targets || "").trim() : "",
+      wxpusher_enabled: Boolean(wxpusherEnabled),
+      wxpusher_app_token: wxpusherEnabled && useCustomWxPusher ? String(form.wxpusher_app_token || "").trim() : "",
+      wxpusher_uid: wxpusherEnabled && useCustomWxPusher ? String(form.wxpusher_uid || "").trim() : "",
     };
     if (mode === "create") {
       payload.keyword = String(form.keyword || "").trim();
@@ -142,6 +152,32 @@ export default function SchemeModal({ mode, initial, onSubmit, onClose, wechatCo
                     ))}
                   </SelectContent>
                 </Select>
+              )}
+            </div>
+          )}
+          <div className="col-span-2 flex items-center gap-3">
+            <Switch checked={wxpusherEnabled} onCheckedChange={setWxpusherEnabled} id="wxpusher" />
+            <Label htmlFor="wxpusher">启用 WxPusher 通知</Label>
+          </div>
+          {wxpusherEnabled && (
+            <div className="col-span-2 flex flex-col gap-2 rounded-lg border border-border bg-muted/20 p-3">
+              <label className="flex items-center gap-2 text-sm">
+                <input type="radio" checked={!useCustomWxPusher} onChange={() => setUseCustomWxPusher(false)} />
+                <span>使用全局配置{globalWxPusherToken && globalWxPusherUid ? "" : "（未配置）"}</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="radio" checked={useCustomWxPusher} onChange={() => setUseCustomWxPusher(true)} />
+                <span>自定义配置</span>
+              </label>
+              {useCustomWxPusher && (
+                <div className="mt-1 flex flex-col gap-2">
+                  <Input value={form.wxpusher_app_token || ""}
+                    onChange={(e) => setForm({ ...form, wxpusher_app_token: e.target.value })}
+                    placeholder="AppToken (AT_xxx)" />
+                  <Input value={form.wxpusher_uid || ""}
+                    onChange={(e) => setForm({ ...form, wxpusher_uid: e.target.value })}
+                    placeholder="UID (UID_xxx)" />
+                </div>
               )}
             </div>
           )}

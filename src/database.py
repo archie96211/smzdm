@@ -59,6 +59,9 @@ class DatabaseManager:
                 'wechat_enabled': 'BOOLEAN DEFAULT 0',
                 'wechat_account_id': "TEXT DEFAULT ''",
                 'wechat_targets': "TEXT DEFAULT ''",
+                'wxpusher_enabled': 'BOOLEAN DEFAULT 0',
+                'wxpusher_app_token': "TEXT DEFAULT ''",
+                'wxpusher_uid': "TEXT DEFAULT ''",
             })
             
             # 关键词表
@@ -136,6 +139,8 @@ class DatabaseManager:
                 ('server_port', '18080', '后端服务监听端口'),
                 ('dingtalk_webhook', '', '全局钉钉 Webhook URL'),
                 ('dingtalk_secret', '', '全局钉钉加签密钥'),
+                ('wxpusher_app_token', '', '全局 WxPusher AppToken'),
+                ('wxpusher_uid', '', '全局 WxPusher UID'),
             ])
             
             # 创建索引
@@ -157,19 +162,23 @@ class DatabaseManager:
     def create_scheme(self, name: str, description: str = "", refresh_interval: int = 60, 
                      dingtalk_webhook: str = "", dingtalk_secret: str = "",
                      wechat_enabled: bool = False, wechat_account_id: str = "",
-                     wechat_targets: str = "") -> int:
+                     wechat_targets: str = "",
+                     wxpusher_enabled: bool = False, wxpusher_app_token: str = "",
+                     wxpusher_uid: str = "") -> int:
         """创建监控方案"""
         with self.connect() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO monitor_schemes (
                     name, description, refresh_interval, dingtalk_webhook, dingtalk_secret,
-                    wechat_enabled, wechat_account_id, wechat_targets
+                    wechat_enabled, wechat_account_id, wechat_targets,
+                    wxpusher_enabled, wxpusher_app_token, wxpusher_uid
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 name, description, refresh_interval, dingtalk_webhook, dingtalk_secret,
                 int(bool(wechat_enabled)), wechat_account_id, wechat_targets,
+                int(bool(wxpusher_enabled)), wxpusher_app_token, wxpusher_uid,
             ))
             return cursor.lastrowid
     
@@ -199,6 +208,7 @@ class DatabaseManager:
             'name', 'description', 'is_active', 'refresh_interval',
             'dingtalk_webhook', 'dingtalk_secret',
             'wechat_enabled', 'wechat_account_id', 'wechat_targets',
+            'wxpusher_enabled', 'wxpusher_app_token', 'wxpusher_uid',
             'updated_at',
         }
         for key in kwargs:
