@@ -640,17 +640,28 @@ func (s *bridgeServer) send(w http.ResponseWriter, r *http.Request, req sendRequ
 	results := make([]sendResult, 0, len(targets))
 	for _, target := range targets {
 		result := sendResult{AccountID: account.AccountID, Target: target.UserID, Status: "ok"}
-		if err := sendOne(ctx, account, target.UserID, req.Text, mediaItems, target.ContextToken); err != nil {
+		err := sendOne(ctx, account, target.UserID, req.Text, mediaItems, target.ContextToken)
+
+		// Auto-recovery for ret=-2 (stale context_token): fetch fresh token via getupdates and retry once.
+		if err != nil && strings.Contains(err.Error(), "ret=-2") {
+			log.Printf("[wechat_bridge] ret=-2 detected, attempting context_token refresh for target=%s", target.UserID)
+			if newToken := s.refreshContextToken(ctx, account, target.UserID); newToken != "" {
+				err = sendOne(ctx, account, target.UserID, req.Text, mediaItems, newToken)
+			}
+		}
+
+		if err != nil {
 			result.Status = "failed"
 			result.Error = err.Error()
 			log.Printf("[wechat_bridge] send failed account=%s target=%s: %v", account.AccountID, target.UserID, err)
-			// Update account status on session-level errors so the frontend can detect issues.
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "session expired") || strings.Contains(errMsg, "ret=-14") || strings.Contains(errMsg, "errcode=-14") {
 				s.setAccountStatus(account, "session_expired", "微信会话已过期，请重新扫码登录")
 			} else if strings.Contains(errMsg, "ret=-2") {
-				s.setAccountStatus(account, "error", "微信发送失败(ret=-2)，可能需要重新扫码登录")
+				s.setAccountStatus(account, "error", "微信发送失败(ret=-2)，请给bot发一条消息刷新会话")
 			}
+		} else {
+			s.setAccountStatus(account, "online", "")
 		}
 		results = append(results, result)
 	}
@@ -919,6 +930,31 @@ func (s *bridgeServer) getConversation(id string) *wechatConversation {
 
 func (s *bridgeServer) findConversation(accountID string, userID string) *wechatConversation {
 	return s.getConversation(conversationID(accountID, strings.TrimSpace(userID)))
+}
+
+// refreshContextToken fetches recent messages via getupdates to obtain a fresh
+// context_token for the given conversation, then updates the in-memory cache.
+// Returns the new context_token, or empty string if none was found.
+func (s *bridgeServer) refreshContextToken(ctx context.Context, account *accountClient, userID string) string {
+	resp, err := account.client.GetUpdates(ctx, "")
+	if err != nil {
+		log.Printf("[wechat_bridge] refreshContextToken getupdates failed: %v", err)
+		return ""
+	}
+	for _, msg := range resp.Msgs {
+		if strings.TrimSpace(msg.FromUserID) == strings.TrimSpace(userID) && msg.ContextToken != "" {
+			convID := conversationID(account.AccountID, userID)
+			s.mu.Lock()
+			if conv := s.conversations[convID]; conv != nil {
+				conv.ContextToken = msg.ContextToken
+			}
+			s.mu.Unlock()
+			log.Printf("[wechat_bridge] refreshed context_token for user=%s", userID)
+			return msg.ContextToken
+		}
+	}
+	log.Printf("[wechat_bridge] refreshContextToken: no new message from user=%s", userID)
+	return ""
 }
 
 func (s *bridgeServer) recordConversation(ctx context.Context, account *accountClient, msg ilink.WeixinMessage) {
