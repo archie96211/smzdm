@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import {
   Activity, Bell, CheckCircle2, CircleDollarSign, Clock3,
   ExternalLink, ListChecks, MessageCircle, Moon, PackageOpen,
-  Plus, RefreshCw, Search, Settings, Sparkles, Sun,
+  Plus, RefreshCw, Search, Send, Settings, Sparkles, Sun,
   Tag, Trash2, Zap,
 } from "lucide-react";
 
@@ -12,7 +12,7 @@ import {
   useSchemes, useMonitorStatus, useSystemInfo, useSchemeDetail,
   useWechatStatus, useCreateScheme, useUpdateScheme, useDeleteScheme,
   useAddKeyword, useUpdateKeyword, useDeleteKeyword, useRestartScheme,
-  useTestWebhook, useTestWechat, useGlobalSettings,
+  useTestWebhook, useTestWechat, useTestWxPusher, useGlobalSettings,
 } from "@/helpers/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
@@ -34,6 +34,7 @@ import KeywordModal from "@/components/modals/KeywordModal";
 import SettingsModal from "@/components/modals/SettingsModal";
 import WechatModal from "@/components/modals/WechatModal";
 import DingtalkModal from "@/components/modals/DingtalkModal";
+import WxPusherModal from "@/components/modals/WxPusherModal";
 
 const STATUS_LABELS = {
   online: "在线", connecting: "连接中", reconnecting: "重连中",
@@ -211,7 +212,7 @@ function KeywordRow({ keyword, onEdit, onDelete }) {
 
 /* ---------- DetailView ---------- */
 function DetailView({ detail, selectedRuntime, wechatAccounts, globalWebhook, onEdit, onToggle, onRestart, onDelete,
-  onAddKeyword, onEditKeyword, onDeleteKeyword, onTestWebhook, onTestWechat, onOpenWechat }) {
+  onAddKeyword, onEditKeyword, onDeleteKeyword, onTestWebhook, onTestWechat, onOpenWechat, onTestWxPusher }) {
   return (
     <div className="flex flex-col gap-4">
       {/* Hero */}
@@ -345,6 +346,9 @@ function DetailView({ detail, selectedRuntime, wechatAccounts, globalWebhook, on
               <span className={`flex size-2.5 rounded-full ${detail.wxpusher_enabled ? "bg-green-500" : "bg-muted-foreground/40"}`} />
               <span className="text-sm">{detail.wxpusher_enabled ? "WxPusher 已启用" : "WxPusher 未启用"}</span>
             </div>
+            {detail.wxpusher_enabled && (
+              <Button variant="outline" size="sm" onClick={() => onTestWxPusher(detail)}>测试 WxPusher</Button>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -419,6 +423,9 @@ export default function App() {
   const { data: globalSettings } = useGlobalSettings();
   const globalWebhook = globalSettings?.dingtalk_webhook?.value || "";
   const globalSecret = globalSettings?.dingtalk_secret?.value || "";
+  const globalWxPusherToken = globalSettings?.wxpusher_app_token?.value || "";
+  const globalWxPusherUid = globalSettings?.wxpusher_uid?.value || "";
+  const wxpusherConfigured = Boolean(globalWxPusherToken && globalWxPusherUid);
 
   const createSchemeMut = useCreateScheme();
   const updateSchemeMut = useUpdateScheme();
@@ -429,6 +436,7 @@ export default function App() {
   const restartSchemeMut = useRestartScheme();
   const testWebhookMut = useTestWebhook();
   const testWechatMut = useTestWechat();
+  const testWxPusherMut = useTestWxPusher();
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
@@ -566,6 +574,16 @@ export default function App() {
     } catch (e) { toast.error(`测试失败：${e.message}`); }
   }
 
+  async function handleTestWxPusher(scheme) {
+    try {
+      const token = scheme.wxpusher_app_token || globalWxPusherToken;
+      const uid = scheme.wxpusher_uid || globalWxPusherUid;
+      if (!token || !uid) { toast.warning("WxPusher 未配置 AppToken 或 UID"); return; }
+      const res = await testWxPusherMut.mutateAsync({ app_token: token, uid });
+      if (res.success) toast.success(res.message); else toast.warning(res.message);
+    } catch (e) { toast.error(`测试失败：${e.message}`); }
+  }
+
   function handleRefreshAll() { qc.invalidateQueries(); }
 
   function minimizeToTray() {
@@ -618,6 +636,17 @@ export default function App() {
               </TooltipTrigger>
               <TooltipContent>
                 {wechatTooltipText}
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon" onClick={() => setModal({ type: "wxpusher" })} className="relative">
+                  <Send size={18} />
+                  <span className={`absolute right-1 top-1 size-2 rounded-full border border-background ${wxpusherConfigured ? "bg-green-500" : "bg-muted-foreground/50"}`} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {wxpusherConfigured ? "WxPusher 已配置" : "WxPusher 未配置，点击设置"}
               </TooltipContent>
             </Tooltip>
             <Tooltip>
@@ -681,6 +710,7 @@ export default function App() {
                 onTestWebhook={handleTestWebhook}
                 onTestWechat={handleTestWechat}
                 onOpenWechat={() => setModal({ type: "wechat" })}
+                onTestWxPusher={handleTestWxPusher}
               />
             ) : (
               <DetailSkeleton />
@@ -721,6 +751,7 @@ export default function App() {
       )}
       {modal?.type === "settings" && <SettingsModal onClose={() => setModal(null)} />}
       {modal?.type === "dingtalk" && <DingtalkModal onClose={() => setModal(null)} />}
+      {modal?.type === "wxpusher" && <WxPusherModal onClose={() => setModal(null)} />}
       {modal?.type === "wechat" && (
         <WechatModal
           status={wechatStatus}

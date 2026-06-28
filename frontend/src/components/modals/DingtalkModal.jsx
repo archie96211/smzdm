@@ -32,8 +32,11 @@ export default function DingtalkModal({ onClose }) {
       await updateSettingsMut.mutateAsync({
         image_server_host: settings?.image_server_host?.value || "127.0.0.1",
         image_server_port: Number(settings?.image_server_port?.value || 8000),
+        server_port: Number(settings?.server_port?.value || 18080),
         dingtalk_webhook: form.dingtalk_webhook,
         dingtalk_secret: form.dingtalk_secret,
+        wxpusher_app_token: settings?.wxpusher_app_token?.value || "",
+        wxpusher_uid: settings?.wxpusher_uid?.value || "",
       });
       toast.success("钉钉 Webhook 已保存");
       onClose();
