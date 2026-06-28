@@ -683,7 +683,19 @@ func (s *bridgeServer) resolveSendRequest(req sendRequest) (*accountClient, []re
 	if strings.TrimSpace(req.ConversationID) != "" {
 		conversation := s.getConversation(req.ConversationID)
 		if conversation == nil {
-			return nil, nil, fmt.Errorf("conversation_id %q not found; send a WeChat message to the bot first", req.ConversationID)
+			account, err := s.resolveAccount("")
+			if err != nil {
+				return nil, nil, err
+			}
+			if idx := strings.Index(req.ConversationID, ":"); idx > 0 {
+				userID := req.ConversationID[idx+1:]
+				altID := conversationID(account.AccountID, userID)
+				conversation = s.getConversation(altID)
+			}
+			if conversation == nil {
+				return nil, nil, fmt.Errorf("conversation_id %q not found; send a WeChat message to the bot first", req.ConversationID)
+			}
+			return account, []resolvedTarget{{UserID: conversation.UserID, ContextToken: conversation.ContextToken}}, nil
 		}
 		account, err := s.resolveAccount("")
 		if err != nil {
