@@ -657,8 +657,6 @@ func (s *bridgeServer) send(w http.ResponseWriter, r *http.Request, req sendRequ
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "session expired") || strings.Contains(errMsg, "ret=-14") || strings.Contains(errMsg, "errcode=-14") {
 				s.setAccountStatus(account, "session_expired", "微信会话已过期，请重新扫码登录")
-			} else if strings.Contains(errMsg, "ret=-2") {
-				s.setAccountStatus(account, "error", "微信发送失败(ret=-2)，请给bot发一条消息刷新会话")
 			}
 		} else {
 			s.setAccountStatus(account, "online", "")
