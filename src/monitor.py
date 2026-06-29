@@ -463,7 +463,7 @@ class SMZDMMonitor:
                             wxpusher_summary = f"{product_title} {price_text}"
                             success = await self.wxpusher_notifier.send_markdown(
                                 app_token=wxpusher_token,
-                                title=card_title,
+                                title=wxpusher_summary,
                                 text=wxpusher_markdown,
                                 uid=wxpusher_uid,
                                 url=article_url if article_url else "",
