@@ -7,7 +7,6 @@ import asyncio
 import logging
 import os
 import ipaddress
-import json
 from datetime import datetime
 from typing import Optional
 

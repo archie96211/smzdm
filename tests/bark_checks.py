@@ -201,7 +201,12 @@ class TransportChecks(unittest.IsolatedAsyncioTestCase):
             try:
 
                 async def received():
-                    while not self.received:
+                    while True:
+                        with mon.db.connect() as conn:
+                            if conn.execute(
+                                "select count(*) from notification_logs"
+                            ).fetchone()[0]:
+                                return
                         await asyncio.sleep(0.01)
 
                 await asyncio.wait_for(received(), 2)
