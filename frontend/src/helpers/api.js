@@ -194,3 +194,33 @@ export function useRestartServer() {
     mutationFn: (port) => apiRequest('/api/server/restart', { method: 'POST', body: JSON.stringify({ port }) }),
   });
 }
+
+// Bark uses a dedicated endpoint so saved keys are never returned in settings lists.
+export function useBarkSettings(schemeId) {
+  const suffix = schemeId ? `?scheme_id=${schemeId}` : '';
+  return useQuery({
+    queryKey: ['bark-settings', schemeId || 'global'],
+    queryFn: () => apiRequest(`/api/bark/settings${suffix}`).then((r) => r.data),
+  });
+}
+
+export function useSaveBarkSettings(schemeId) {
+  const qc = useQueryClient();
+  const suffix = schemeId ? `?scheme_id=${schemeId}` : '';
+  return useMutation({
+    mutationFn: (payload) => apiRequest(`/api/bark/settings${suffix}`, { method: 'PUT', body: JSON.stringify(payload) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['bark-settings'] });
+      qc.invalidateQueries({ queryKey: ['schemes'] });
+      qc.invalidateQueries({ queryKey: ['scheme-detail'] });
+      qc.invalidateQueries({ queryKey: ['monitor-status'] });
+    },
+  });
+}
+
+export function useTestBark(schemeId) {
+  const suffix = schemeId ? `?scheme_id=${schemeId}` : '';
+  return useMutation({
+    mutationFn: (payload) => apiRequest(`/api/test-bark${suffix}`, { method: 'POST', body: JSON.stringify(payload) }),
+  });
+}

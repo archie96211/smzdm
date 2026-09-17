@@ -14,8 +14,12 @@ anyio==4.15.1
     # via starlette
 attrs==26.1.0
     # via aiohttp
+cffi==2.1.1
+    # via cryptography
 click==8.5.0
     # via uvicorn
+cryptography==46.0.5
+    # via -r requirements-server.in
 fastapi==0.141.1
     # via -r requirements-server.in
 frozenlist==1.8.0
@@ -36,6 +40,8 @@ propcache==0.5.4
     # via
     #   aiohttp
     #   yarl
+pycparser==3.0
+    # via cffi
 pydantic==2.13.5
     # via fastapi
 pydantic-core==2.46.5

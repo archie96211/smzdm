@@ -35,6 +35,7 @@ import SettingsModal from "@/components/modals/SettingsModal";
 import WechatModal from "@/components/modals/WechatModal";
 import DingtalkModal from "@/components/modals/DingtalkModal";
 import WxPusherModal from "@/components/modals/WxPusherModal";
+import BarkModal from "@/components/modals/BarkModal";
 
 const STATUS_LABELS = {
   online: "在线", connecting: "连接中", reconnecting: "重连中",
@@ -212,7 +213,7 @@ function KeywordRow({ keyword, onEdit, onDelete }) {
 
 /* ---------- DetailView ---------- */
 function DetailView({ detail, selectedRuntime, wechatAccounts, globalWebhook, onEdit, onToggle, onRestart, onDelete,
-  onAddKeyword, onEditKeyword, onDeleteKeyword, onTestWebhook, onTestWechat, onOpenWechat, onTestWxPusher }) {
+  onAddKeyword, onEditKeyword, onDeleteKeyword, onTestWebhook, onTestWechat, onOpenWechat, onTestWxPusher, onOpenBark }) {
   return (
     <div className="flex flex-col gap-4">
       {/* Hero */}
@@ -349,6 +350,9 @@ function DetailView({ detail, selectedRuntime, wechatAccounts, globalWebhook, on
             {detail.wxpusher_enabled && (
               <Button variant="outline" size="sm" onClick={() => onTestWxPusher(detail)}>测试 WxPusher</Button>
             )}
+            <Separator orientation="vertical" className="h-6" />
+            <span className="text-sm">{detail.bark_enabled ? "Bark 已启用" : "Bark 未启用"}</span>
+            <Button variant="outline" size="sm" onClick={onOpenBark}>配置 Bark</Button>
           </div>
         </CardContent>
       </Card>
@@ -649,6 +653,9 @@ export default function App() {
                 {wxpusherConfigured ? "WxPusher 已配置" : "WxPusher 未配置，点击设置"}
               </TooltipContent>
             </Tooltip>
+            <Button variant="ghost" size="sm" onClick={() => setModal({ type: "bark" })}>
+              <Bell size={16} /> Bark
+            </Button>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button variant="ghost" size="icon" onClick={handleRefreshAll}>
@@ -709,6 +716,7 @@ export default function App() {
                 onDeleteKeyword={handleDeleteKeyword}
                 onTestWebhook={handleTestWebhook}
                 onTestWechat={handleTestWechat}
+                onOpenBark={() => setModal({ type: "bark", schemeId: detail.id })}
                 onOpenWechat={() => setModal({ type: "wechat" })}
                 onTestWxPusher={handleTestWxPusher}
               />
@@ -751,6 +759,7 @@ export default function App() {
       )}
       {modal?.type === "settings" && <SettingsModal onClose={() => setModal(null)} />}
       {modal?.type === "dingtalk" && <DingtalkModal onClose={() => setModal(null)} />}
+      {modal?.type === "bark" && <BarkModal schemeId={modal.schemeId} onClose={() => setModal(null)} />}
       {modal?.type === "wxpusher" && <WxPusherModal onClose={() => setModal(null)} />}
       {modal?.type === "wechat" && (
         <WechatModal

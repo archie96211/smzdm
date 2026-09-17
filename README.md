@@ -361,6 +361,50 @@ POST https://wxpusher.zjiecode.com/api/send/message
 }
 ```
 
+## Bark 通知
+
+[Bark](https://github.com/Finb/Bark) 可将优惠推送到 iPhone，支持官方或自建服务。
+
+1. 点击顶栏 **Bark**，填写服务根地址（默认 `https://api.day.app`）和设备 Key。地址不包含设备 Key 或 `/push`；反向代理的路径前缀可以保留。
+2. 设置分组、图标、声音、提醒级别、是否保存及保存时效，按需配置消息加密。
+3. 点击 **发送测试**。接口成功只表示 Bark 服务接受请求，仍需在手机确认收到通知及展示效果。
+4. 在监控方案中启用 Bark；详情页的 **配置 Bark** 可切换全局配置或为该方案保存完整的独立配置。切回全局会删除该方案的覆盖配置。
+
+### 可配置选项
+
+| 选项 | 行为 |
+|---|---|
+| 分组 | 默认 `SMZDM · {scheme}`；支持 `{scheme}`、`{mall}`、`{keyword}`、`{url}`，留空不指定 |
+| 图标 / 商品图片 | 自定义 HTTP(S) 图标；商品图片可单独开关。图标需要 iOS 15+，同一 URL 会被客户端缓存 |
+| 保存历史 | 跟随 App、保存、不保存 |
+| 保存时效 `ttl` | 秒数，留空不指定过期，`0` 不保存；`86400` 为一天。仅对归档消息生效，由支持此参数的 Bark App 清理，不是 APNs 离线投递期限 |
+| 铃声 / 提醒级别 | 自定义铃声；被动、正常、时效性、重要警告；重要警告音量 0–10，实际行为依赖设备权限 |
+| 角标 / 重复响铃 | 可选角标和重复响铃开关，默认不额外指定 |
+| 点击 / 复制 | 是否打开优惠链接；复制开关与自定义复制内容，支持上述占位符。新版 iOS 需手动长按复制 |
+| 加密 | 关闭、AES-CBC（PKCS7）、AES-GCM；16/24/32 UTF-8 字节密钥对应 AES-128/192/256 |
+
+### 加密与凭据
+
+- 在 Bark App 设置相同的 AES 算法、模式和密钥。每条消息使用新随机 IV，GCM 的密文包含认证标签；标题、正文、分组、图标、跳转和保存参数均在密文内。
+- 加密失败不会回退明文。加密不隐藏接收设备 Key，也不等于数据库静态加密。
+- 设备 Key 和 AES 密钥保存在运行时 SQLite 中；管理接口只返回“已保存”状态。编辑留空保留旧值，需要删除时显式勾选清除。请保护数据目录和管理界面访问。
+- 测试使用当前表单但不会保存配置，不会向商品历史写入模拟优惠。实际商品通知按原有逻辑写入渠道日志；首次采集仍不推送旧商品。
+- HTTP 错误、API 拒绝、超时均记为发送失败，不记录服务响应正文、密钥、请求体或异常 URL；不自动重试，以免重复通知。
+
+接口：`GET/PUT /api/bark/settings`、`POST /api/test-bark`，添加 `?scheme_id=<id>` 管理或测试单个方案。
+
+协议依据：[官方参数](https://github.com/Finb/Bark/blob/master/docs/tutorial.md)、[加密说明](https://github.com/Finb/Bark/blob/master/docs/encryption.md)、[服务端 API](https://github.com/Finb/bark-server/blob/master/docs/API_V2.md)。
+
+离线验证（不发送到外部服务）：
+
+```sh
+python -m unittest discover -s tests -p '*checks.py' -v
+python -m compileall desktop_app.py start.py src
+npm run build
+```
+
+测试需要后端依赖及 `httpx==0.27.2`。覆盖原依赖版本；Windows EXE 打包与手机展示需在对应平台另行验证。
+
 ## 端口和安全
 
 默认端口：
@@ -483,6 +527,7 @@ PUT /api/global-settings
 POST /api/test-webhook
 POST /api/test-wechat
 POST /api/test-wxpusher
+POST /api/test-bark
 ```
 
 微信：

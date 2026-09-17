@@ -56,6 +56,8 @@ class DatabaseManager:
                 )
             ''')
             self._ensure_columns(cursor, 'monitor_schemes', {
+                'bark_enabled': 'BOOLEAN DEFAULT 0',
+                'bark_config': "TEXT DEFAULT ''",
                 'wechat_enabled': 'BOOLEAN DEFAULT 0',
                 'wechat_account_id': "TEXT DEFAULT ''",
                 'wechat_targets': "TEXT DEFAULT ''",
@@ -164,7 +166,7 @@ class DatabaseManager:
                      wechat_enabled: bool = False, wechat_account_id: str = "",
                      wechat_targets: str = "",
                      wxpusher_enabled: bool = False, wxpusher_app_token: str = "",
-                     wxpusher_uid: str = "") -> int:
+                     wxpusher_uid: str = "", bark_enabled: bool = False) -> int:
         """创建监控方案"""
         with self.connect() as conn:
             cursor = conn.cursor()
@@ -172,13 +174,13 @@ class DatabaseManager:
                 INSERT INTO monitor_schemes (
                     name, description, refresh_interval, dingtalk_webhook, dingtalk_secret,
                     wechat_enabled, wechat_account_id, wechat_targets,
-                    wxpusher_enabled, wxpusher_app_token, wxpusher_uid
+                    wxpusher_enabled, wxpusher_app_token, wxpusher_uid, bark_enabled
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 name, description, refresh_interval, dingtalk_webhook, dingtalk_secret,
                 int(bool(wechat_enabled)), wechat_account_id, wechat_targets,
-                int(bool(wxpusher_enabled)), wxpusher_app_token, wxpusher_uid,
+                int(bool(wxpusher_enabled)), wxpusher_app_token, wxpusher_uid, int(bool(bark_enabled)),
             ))
             return cursor.lastrowid
     
@@ -209,6 +211,7 @@ class DatabaseManager:
             'dingtalk_webhook', 'dingtalk_secret',
             'wechat_enabled', 'wechat_account_id', 'wechat_targets',
             'wxpusher_enabled', 'wxpusher_app_token', 'wxpusher_uid',
+            'bark_enabled', 'bark_config',
             'updated_at',
         }
         for key in kwargs:
@@ -441,6 +444,15 @@ class DatabaseManager:
             'host': host,
             'port': int(port)
         }
+
+    def get_bark_config(self, scheme_id: Optional[int] = None) -> dict:
+        """Resolve a complete scheme override or the global Bark configuration."""
+        if scheme_id is not None:
+            scheme = self.get_scheme(scheme_id)
+            if scheme and scheme.get("bark_config"):
+                return json.loads(scheme["bark_config"])
+        return json.loads(self.get_config("bark_config") or "{}")
+
 
 if __name__ == "__main__":
     # 测试数据库
