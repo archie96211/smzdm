@@ -105,7 +105,7 @@ export default function BarkModal({ schemeId, onClose }) {
 
   return (
     <Dialog open onOpenChange={(value) => { if (!value) onClose(); }}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader><DialogTitle>{schemeId ? "方案 Bark 通知" : "全局 Bark 通知"}</DialogTitle></DialogHeader>
         {error && <p className="text-sm text-destructive">加载失败：{error.message}</p>}
         {isLoading || !form ? <p className="text-sm text-muted-foreground">正在读取配置…</p> : (
@@ -124,10 +124,10 @@ export default function BarkModal({ schemeId, onClose }) {
             ) : <p className="text-sm text-muted-foreground">先配置接收设备，再在需要的监控方案中开启 Bark。修改全局配置会影响所有使用它的方案。</p>}
             {schemeId && useGlobal ? <p className="text-sm text-muted-foreground">发送与测试均使用已保存的全局配置。关闭此开关可为当前方案配置独立的设备和通知选项。</p> : (
               <>
-                {textField("server_url", "Bark 服务地址", "https://api.day.app")}
-                <p className="text-xs text-muted-foreground">填写服务根地址，不含设备 Key 或 /push。支持自建服务及反向代理路径。</p>
-                {textField("device_key", "设备 Key", form.has_device_key ? "已保存，留空保持不变" : "从 Bark App 获取", "password")}
-                {clearKey("device_key", "清除已保存的设备 Key")}
+                {textField("push_url", "Bark 推送地址", form.has_device_key ? "已保存，留空保持不变" : "https://api.day.app/你的设备Key/", "password")}
+                <p className="text-xs text-muted-foreground">直接粘贴 Bark App 复制的完整推送地址，包含设备 Key，支持自建服务。地址仅用于发送，不会回显；修改分组等选项时可留空。</p>
+                {form.has_device_key && <p className="text-xs text-muted-foreground">已配置服务：{form.server_url} · 设备 Key 已隐藏</p>}
+                {clearKey("device_key", "清除已保存的推送凭据")}
                 {textField("group", "通知分组", "SMZDM · {scheme}")}
                 <p className="text-xs text-muted-foreground">分组与复制内容支持 {"{scheme}、{mall}、{keyword}、{url}"} 占位符。留空分组则不指定分组。</p>
                 {textField("icon", "通知图标 URL", "https://example.com/icon.png")}
@@ -161,6 +161,13 @@ export default function BarkModal({ schemeId, onClose }) {
                     {textField("badge", "App 角标（可选）", "留空不指定", "number", { min: 0, max: 99999 })}
                     {toggle("call", "重复播放铃声（约 30 秒）")}
                     {toggle("open_url", "点击通知打开优惠详情")}
+                    {form.open_url && <>
+                      <Choice id="bark-link-mode" label="链接打开方式" value={form.link_mode || "web"}
+                        options={[["web", "网页链接（默认）"], ["app", "App 直达"]]} onChange={(value) => update("link_mode", value)} />
+                      <p className="text-xs text-muted-foreground">{form.link_mode === "app"
+                        ? "直接打开什么值得买 App 的好价详情。未安装 App 时不会自动回退；通知正文保留备用网页地址，可复制后手动打开。非好价详情链接仍使用网页地址。"
+                        : "使用原始网页链接。系统可能唤起 App，具体取决于设备设置和目标 App 的通用链接支持。"}</p>
+                    </>}
                     {toggle("auto_copy", "复制推送内容（新版 iOS 需手动长按）")}
                     {textField("copy_text", "自定义复制内容（可选）", "{url}")}
                   </div>

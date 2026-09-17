@@ -4,10 +4,11 @@
 import base64
 import json
 import logging
+import re
 import secrets
 import string
 from typing import Literal, Optional
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 import aiohttp
 from cryptography.hazmat.primitives import padding
@@ -32,6 +33,7 @@ class BarkConfig(BaseModel):
     archive: Literal["default", "yes", "no"] = "default"
     ttl: Optional[int] = Field(default=None, ge=0, le=315360000)
     open_url: bool = True
+    link_mode: Literal["web", "app"] = "web"
     auto_copy: bool = False
     copy_text: str = Field(default="", max_length=500)
     call: bool = False
@@ -95,6 +97,31 @@ def public_config(config: BarkConfig) -> dict:
 
 
 def merge_config(values: dict, previous: dict, clear_secrets: list[str]) -> BarkConfig:
+    values = dict(values)
+    push_url = values.pop("push_url", "")
+    if push_url:
+        parts = urlsplit(push_url.strip())
+        if (
+            parts.scheme not in {"http", "https"}
+            or not parts.hostname
+            or parts.username
+            or parts.password
+            or parts.fragment
+        ):
+            raise ValueError("Invalid Bark push URL")
+        segments = parts.path.strip("/").split("/")
+        # Bark's copied examples may append a title/body after its device key.
+        key_index = next(
+            (i for i, part in enumerate(segments)
+             if 20 <= len(part) <= 512 and part.isascii() and part.isalnum()),
+            len(segments) - 1,
+        )
+        key = unquote(segments[key_index])
+        if not key or key == "push" or "/" in key or any(char.isspace() for char in key):
+            raise ValueError("Bark push URL must contain a device key")
+        prefix = "/" + "/".join(segments[:key_index]) if key_index else ""
+        values["server_url"] = urlunsplit((parts.scheme, parts.netloc, prefix, "", ""))
+        values["device_key"] = key
     merged = {**previous, **values}
     for field in SECRET_FIELDS:
         if field in clear_secrets:
@@ -130,6 +157,18 @@ def build_payload(
         payload["ttl"] = config.ttl
     if config.open_url and fields["url"]:
         payload["url"] = fields["url"]
+        if config.link_mode == "app":
+            parts = urlsplit(fields["url"])
+            article = re.fullmatch(r"/p/([0-9]+)/?", parts.path)
+            if (
+                parts.scheme in {"http", "https"}
+                and parts.hostname in {"www.smzdm.com", "m.smzdm.com"}
+                and not parts.username
+                and not parts.password
+                and article
+            ):
+                payload["url"] = f"smzdm://youhui/{article.group(1)}"
+                payload["body"] += f"\n\n备用网页（未安装 App 时手动打开）：\n{fields['url']}"
     elif not config.open_url:
         payload["action"] = "none"
     if config.auto_copy:

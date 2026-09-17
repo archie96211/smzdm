@@ -23,13 +23,51 @@ from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi.testclient import TestClient
-from src.bark_notifier import BarkConfig, BarkNotifier, build_payload
+from src.bark_notifier import BarkConfig, BarkNotifier, build_payload, merge_config, public_config
 from src.database import DatabaseManager
 from src.monitor import SMZDMMonitor
 from src import web_server
 
 
 class PayloadChecks(unittest.TestCase):
+    def test_link_modes_and_fallback(self):
+        url = "https://www.smzdm.com/p/123456/"
+        context = {"url": url}
+        web = build_payload(BarkConfig(), "t", "b", context)
+        self.assertEqual(web["url"], url)
+        self.assertEqual(web["body"], "b")
+        app = build_payload(BarkConfig(link_mode="app", copy_text="{url}"), "t", "b", context)
+        self.assertEqual(app["url"], "smzdm://youhui/123456")
+        self.assertIn(url, app["body"])
+        self.assertEqual(app["copy"], url)
+        for other in ["https://post.smzdm.com/p/abc/", "https://www.smzdm.com.evil.test/p/123/", "https://example.com/p/123/", "https://www.smzdm.com/"]:
+            payload = build_payload(BarkConfig(link_mode="app"), "t", "b", {"url": other})
+            self.assertEqual(payload["url"], other)
+            self.assertEqual(payload["body"], "b")
+        disabled = build_payload(BarkConfig(link_mode="app", open_url=False), "t", "b", context)
+        self.assertNotIn("url", disabled)
+        self.assertEqual(disabled["body"], "b")
+        self.assertEqual(disabled["action"], "none")
+        with self.assertRaises(ValueError):
+            BarkConfig(link_mode="unsupported")
+
+    def test_complete_push_url_and_redaction(self):
+        key = "a" * 22
+        for url, server in [
+            (f"https://example.com/{key}/", "https://example.com"),
+            (f"https://example.com/{key}/测试标题/测试正文?group=test", "https://example.com"),
+            (f"https://example.com/bark/{key}/", "https://example.com/bark"),
+        ]:
+            config = merge_config({"push_url": url}, {}, [])
+            self.assertEqual(config.server_url, server)
+            self.assertEqual(config.device_key, key)
+            self.assertNotIn(key, json.dumps(public_config(config)))
+            self.assertEqual(merge_config({"push_url": ""}, config.model_dump(), []).device_key, key)
+        for url in ["https://example.com/", "https://example.com/push", "https://user:pass@example.com/key"]:
+            with self.assertRaises(ValueError):
+                merge_config({"push_url": url}, {}, [])
+
+
     def test_features_and_zero_ttl(self):
         config = BarkConfig(
             device_key="test-device",

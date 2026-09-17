@@ -12,7 +12,7 @@ import {
   useSchemes, useMonitorStatus, useSystemInfo, useSchemeDetail,
   useWechatStatus, useCreateScheme, useUpdateScheme, useDeleteScheme,
   useAddKeyword, useUpdateKeyword, useDeleteKeyword, useRestartScheme,
-  useTestWebhook, useTestWechat, useTestWxPusher, useGlobalSettings,
+  useTestWebhook, useTestWechat, useTestWxPusher, useGlobalSettings, useBarkSettings,
 } from "@/helpers/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
@@ -35,6 +35,7 @@ import SettingsModal from "@/components/modals/SettingsModal";
 import WechatModal from "@/components/modals/WechatModal";
 import DingtalkModal from "@/components/modals/DingtalkModal";
 import WxPusherModal from "@/components/modals/WxPusherModal";
+import BarkIcon from "@/components/BarkIcon";
 import BarkModal from "@/components/modals/BarkModal";
 
 const STATUS_LABELS = {
@@ -425,6 +426,8 @@ export default function App() {
   const { data: detail, isLoading: detailLoading } = useSchemeDetail(selectedId);
   const { data: wechatData = { status: null, accounts: [], conversations: [] } } = useWechatStatus();
   const { data: globalSettings } = useGlobalSettings();
+  const { data: barkSettings } = useBarkSettings();
+  const barkConfigured = Boolean(barkSettings?.config?.has_device_key);
   const globalWebhook = globalSettings?.dingtalk_webhook?.value || "";
   const globalSecret = globalSettings?.dingtalk_secret?.value || "";
   const globalWxPusherToken = globalSettings?.wxpusher_app_token?.value || "";
@@ -653,9 +656,17 @@ export default function App() {
                 {wxpusherConfigured ? "WxPusher 已配置" : "WxPusher 未配置，点击设置"}
               </TooltipContent>
             </Tooltip>
-            <Button variant="ghost" size="sm" onClick={() => setModal({ type: "bark" })}>
-              <Bell size={16} /> Bark
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon" aria-label="Bark 通知设置" onClick={() => setModal({ type: "bark" })} className="relative">
+                  <BarkIcon size={18} />
+                  <span className={`absolute right-1 top-1 size-2 rounded-full border border-background ${barkConfigured ? "bg-green-500" : "bg-muted-foreground/50"}`} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {barkConfigured ? "Bark 已配置" : "Bark 未配置，点击设置"}
+              </TooltipContent>
+            </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button variant="ghost" size="icon" onClick={handleRefreshAll}>
