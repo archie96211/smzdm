@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import signal
+import os
 
 import uvicorn
 
@@ -21,7 +21,7 @@ async def main_async() -> None:
     runtime.configure_logging()
     host = runtime.get_server_host()
     port = runtime.get_server_port()
-    web_server.configure_runtime(host, port, auto_start=True)
+    web_server.configure_runtime(host, port, auto_start=os.getenv("AUTO_START_MONITOR", "true").lower() == "true")
 
     config = uvicorn.Config(
         web_server.app,
@@ -32,31 +32,8 @@ async def main_async() -> None:
     )
     server = uvicorn.Server(config)
 
-    stop_event = asyncio.Event()
-
-    def request_shutdown(*_: object) -> None:
-        logger.info("收到关闭信号，正在退出...")
-        server.should_exit = True
-        stop_event.set()
-
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            signal.signal(sig, request_shutdown)
-        except ValueError:
-            pass
-
-    server_task = asyncio.create_task(server.serve())
-    stop_task = asyncio.create_task(stop_event.wait())
-    done, pending = await asyncio.wait(
-        {server_task, stop_task},
-        return_when=asyncio.FIRST_COMPLETED,
-    )
-    if stop_task in done:
-        server.should_exit = True
-    for task in pending:
-        task.cancel()
-    await asyncio.gather(*pending, return_exceptions=True)
-    await asyncio.gather(server_task, return_exceptions=True)
+    # Uvicorn owns signals and awaits application shutdown before exiting.
+    await server.serve()
 
 
 def main() -> None:

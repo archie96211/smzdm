@@ -75,3 +75,6 @@ test_*.py
 # Nested git repositories
 smzdm-scutjcfeng/
 zdm/
+
+# Local environment may be relocated via symlink
+.venv

@@ -1,0 +1,12 @@
+.git
+.venv
+node_modules
+frontend
+wechat_bridge
+data
+logs
+__pycache__
+**/__pycache__
+*.db
+.env
+artifacts

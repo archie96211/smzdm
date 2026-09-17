@@ -85,15 +85,13 @@ def configure_logging(level: str | None = None) -> None:
     if stream and hasattr(stream, "write"):
         handlers.append(logging.StreamHandler(stream))
     backup_count = int(os.getenv("LOG_BACKUP_DAYS", "14"))
-    handlers.append(
-        TimedRotatingFileHandler(
-            get_log_file(),
-            when="midnight",
-            interval=1,
-            backupCount=max(1, backup_count),
-            encoding="utf-8",
+    if os.getenv("SMZDM_LOG_STDOUT_ONLY", "false").lower() != "true":
+        handlers.append(
+            TimedRotatingFileHandler(
+                get_log_file(), when="midnight", interval=1,
+                backupCount=max(1, backup_count), encoding="utf-8",
+            )
         )
-    )
     logging.basicConfig(
         level=log_level,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",

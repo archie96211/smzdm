@@ -62,7 +62,7 @@ function AppSidebar({ schemes, status, selectedId, onSelect, onToggle, onNewSche
           </div>
           <div className="flex flex-col group-data-[collapsible=icon]:hidden">
             <strong className="text-sm">SMZDM Monitor</strong>
-            <span className="text-xs text-muted-foreground">好价监控桌面版</span>
+            <span className="text-xs text-muted-foreground">好价监控服务</span>
           </div>
         </div>
       </SidebarHeader>

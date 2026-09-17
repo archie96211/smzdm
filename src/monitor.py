@@ -35,6 +35,8 @@ class SMZDMMonitor:
         self.wxpusher_notifier = WxPusherNotifier()
         self.image_cache = ImageCache(db_path=db_path)
         self.api_base_url = os.getenv("SMZDM_API_BASE_URL", "https://api.smzdm.com/v1/list")
+        self.fetch_metrics = {"requests": 0, "successes": 0, "failures": 0, "response_bytes": 0, "last": {}}
+        self.fetch_backoff = {}
         self.running = False
         self.tasks = {}
         self._wechat_alert_sent = False
@@ -46,8 +48,10 @@ class SMZDMMonitor:
         
     async def fetch_products(self, session: aiohttp.ClientSession, keyword: str, **params) -> List[Dict]:
         """?????????"""
+        started = time.monotonic()
+        metric = {"at": datetime.now().isoformat(), "ok": False, "rows": 0}
+        self.fetch_metrics["requests"] += 1
         try:
-            # ?????????
             api_params = {
                 'keyword': keyword,
                 'category_id': params.get('category_id', ''),
@@ -65,24 +69,37 @@ class SMZDMMonitor:
             }
             
             async with session.get(self.api_base_url, params=api_params, headers=headers) as response:
+                metric["http_status"] = response.status
+                response.raise_for_status()
                 if response.status == 200:
+                    body = await response.read()
+                    self.fetch_metrics["response_bytes"] += len(body)
                     data = await response.json()
                     if str(data.get('error_code', '1')) == '0':
                         rows = data.get('data', {}).get('rows', [])
                         faxian_rows = [r for r in rows if str(r.get('article_channel_id', '')) == '2']
                         if len(faxian_rows) < len(rows):
                             logger.info("Filtered %d non-faxian results (articles/etc), kept %d deals", len(rows) - len(faxian_rows), len(faxian_rows))
+                        metric.update(ok=True, rows=len(faxian_rows))
+                        self.fetch_metrics["successes"] += 1
                         return faxian_rows
                     else:
-                        logger.error(f"API???: {data.get('error_msg', '??????')}")
+                        raise RuntimeError(f"SMZDM API error: {data.get('error_code')}")
                 else:
-                    logger.error(f"HTTP???: {response.status}")
+                    raise RuntimeError(f"Unexpected HTTP status: {response.status}")
                     
         except Exception as e:
-            logger.error(f"????????????: {e}")
-        
-        return []
-    
+            metric["error"] = type(e).__name__ + ": " + str(e)[:200]
+            self.fetch_metrics["failures"] += 1
+            logger.warning("Fetch failed for %s: %s", keyword, metric["error"])
+            raise
+        finally:
+            metric["elapsed_ms"] = round((time.monotonic() - started) * 1000, 1)
+            self.fetch_metrics["last"][keyword] = metric
+            # Keep metrics bounded even after editing many keywords.
+            if len(self.fetch_metrics["last"]) > 100:
+                self.fetch_metrics["last"].pop(next(iter(self.fetch_metrics["last"])))
+
     def clean_price(self, price_str: str) -> float:
         """??????????????????"""
         if not price_str:
@@ -232,6 +249,9 @@ class SMZDMMonitor:
             if self.keyword_semaphore is None:
                 self.keyword_semaphore = asyncio.Semaphore(self.max_concurrency)
 
+            failures, retry_at = self.fetch_backoff.get(keyword_data['id'], (0, 0))
+            if time.monotonic() < retry_at:
+                return []
             async with self.keyword_semaphore:
                 products = await self.fetch_products(
                     session,
@@ -243,7 +263,8 @@ class SMZDMMonitor:
                     limit=20
                 )
 
-            # ??????
+            self.fetch_backoff.pop(keyword_data["id"], None)
+            # Apply user price bounds.
             filtered_products = self.filter_by_price(
                 products,
                 keyword_data.get('price_min', 0),
@@ -273,7 +294,10 @@ class SMZDMMonitor:
             return new_products
                 
         except Exception as e:
-            logger.error(f"????????'{keyword_data['keyword']}' ???: {e}")
+            failures = self.fetch_backoff.get(keyword_data['id'], (0, 0))[0] + 1
+            delay = min(3600, 60 * 2 ** min(failures - 1, 6))
+            self.fetch_backoff[keyword_data['id']] = (failures, time.monotonic() + delay)
+            logger.warning("Keyword %s failed; retry no sooner than %ss: %s", keyword_data['keyword'], delay, e)
             return []
     async def monitor_scheme(self, scheme_id: int):
         """Monitor one scheme."""
@@ -331,10 +355,8 @@ class SMZDMMonitor:
                 except Exception as e:
                     logger.error("Monitor scheme %s failed: %s", scheme['name'], e)
 
-                for _ in range(scheme['refresh_interval']):
-                    if not self.running or scheme_id not in self.tasks:
-                        break
-                    await asyncio.sleep(1)
+                # Task cancellation wakes this immediately; no per-second polling.
+                await asyncio.sleep(max(60, scheme['refresh_interval']))
 
     async def send_notifications(self, scheme: Dict, products: List[Dict]):
         """Send configured DingTalk and WeChat notifications."""
@@ -515,7 +537,7 @@ class SMZDMMonitor:
             while self.running and self.tasks:
                 done, _pending = await asyncio.wait(
                     self.tasks.values(),
-                    timeout=1.0,
+                    timeout=60.0,
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 for task in done:
@@ -545,6 +567,7 @@ class SMZDMMonitor:
         self.tasks.clear()
         await self.notifier.close()
         await self.wechat_notifier.close()
+        await self.wxpusher_notifier.close()
         await self.image_cache.close()
         logger.info("Monitor system stopped")
 

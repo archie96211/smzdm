@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import ipaddress
 from datetime import datetime
 from typing import Optional
 
@@ -42,7 +43,7 @@ class SchemeCreate(BaseModel):
     name: str
     description: str = ""
     keyword: str = ""
-    refresh_interval: int = 60
+    refresh_interval: int = Field(default=300, ge=60, le=86400)
     dingtalk_webhook: str = ""
     dingtalk_secret: str = ""
     wechat_enabled: bool = False
@@ -56,7 +57,7 @@ class SchemeCreate(BaseModel):
 class SchemeUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
-    refresh_interval: Optional[int] = None
+    refresh_interval: Optional[int] = Field(default=None, ge=60, le=86400)
     dingtalk_webhook: Optional[str] = None
     dingtalk_secret: Optional[str] = None
     wechat_enabled: Optional[bool] = None
@@ -202,7 +203,17 @@ _mount_static()
 @app.middleware("http")
 async def limit_public_access(request: Request, call_next):
     client_host = request.client.host if request.client else ""
-    if allow_public_api or is_loopback_host(client_host) or request.url.path.startswith("/images/"):
+    try:
+        lan_allowed = any(ipaddress.ip_address(client_host) in ipaddress.ip_network(c.strip())
+                          for c in os.getenv("SMZDM_ALLOWED_NETWORKS", "").split(",") if c.strip())
+    except ValueError:
+        lan_allowed = False
+    if allow_public_api or lan_allowed or is_loopback_host(client_host) or request.url.path.startswith("/images/"):
+        if request.url.path.startswith("/api/wechat/") and os.getenv("SMZDM_WECHAT_BRIDGE_ENABLED", "true").lower() != "true":
+            if request.method == "GET":
+                data = {"enabled": False, "running": False, "account": None} if request.url.path.endswith("/status") else ([] if request.url.path.endswith("/conversations") else None)
+                return JSONResponse({"success": True, "data": data, "message": "此部署未启用微信桥接"})
+            return JSONResponse({"success": False, "message": "此部署未启用微信桥接"}, status_code=503)
         return await call_next(request)
     return JSONResponse(
         {"success": False, "message": "公网访问默认只开放图片缓存 /images/。"},
@@ -313,6 +324,11 @@ async def _sync_scheme_monitor_state(scheme_id: int, update_data: dict) -> None:
 
     if monitor.running and scheme_id in monitor.tasks:
         await monitor.restart_scheme(scheme_id)
+
+
+@app.get("/api/metrics")
+async def metrics():
+    return {"success": True, "data": monitor.fetch_metrics}
 
 
 @app.get("/api/health")
@@ -637,7 +653,8 @@ async def startup_event():
     global auto_start_task
     runtime.ensure_runtime_dirs()
     configure_image_server_defaults()
-    await wechat_bridge.start()
+    if os.getenv("SMZDM_WECHAT_BRIDGE_ENABLED", "true").lower() == "true":
+        await wechat_bridge.start()
     logger.info("SMZDM Web server started at %s", runtime.get_server_base_url())
     if auto_start_monitor:
         auto_start_task = asyncio.create_task(_auto_start_monitor_later(), name="smzdm-monitor-auto-start")
