@@ -13,6 +13,7 @@ from datetime import datetime
 from html import unescape
 from typing import List, Dict, Optional
 from urllib.parse import urlparse
+from .bark_notifier import BarkConfig, BarkNotifier
 from .database import DatabaseManager
 from .dingtalk_notifier import DingTalkNotifier
 from .image_cache import ImageCache
@@ -33,6 +34,7 @@ class SMZDMMonitor:
             token=os.getenv("WECHAT_BRIDGE_TOKEN", ""),
         )
         self.wxpusher_notifier = WxPusherNotifier()
+        self.bark_notifier = BarkNotifier()
         self.image_cache = ImageCache(db_path=db_path)
         self.api_base_url = os.getenv("SMZDM_API_BASE_URL", "https://api.smzdm.com/v1/list")
         self.running = False
@@ -259,6 +261,7 @@ class SMZDMMonitor:
                 )
                 if product_id:
                     product['db_id'] = product_id
+                    product['matched_keyword'] = keyword_data['keyword']
                     new_products.append(product)
                     logger.info(f"???????? {product.get('article_title', '')[:50]}...")
 
@@ -317,7 +320,7 @@ class SMZDMMonitor:
                     if not self.running or scheme_id not in self.tasks:
                         break
 
-                    if all_new_products and (scheme.get('dingtalk_webhook') or scheme.get('wechat_enabled') or scheme.get('wxpusher_enabled')):
+                    if all_new_products and (scheme.get('dingtalk_webhook') or scheme.get('wechat_enabled') or scheme.get('wxpusher_enabled') or scheme.get('bark_enabled')):
                         await self.send_notifications(scheme, all_new_products)
 
                     if not self.running or scheme_id not in self.tasks:
@@ -343,7 +346,8 @@ class SMZDMMonitor:
         global_wxpusher_uid = self.db.get_config('wxpusher_uid') or ''
         has_dingtalk = scheme.get('dingtalk_webhook') or global_webhook
         has_wxpusher = scheme.get('wxpusher_enabled') and (scheme.get('wxpusher_app_token') or global_wxpusher_token) and (scheme.get('wxpusher_uid') or global_wxpusher_uid)
-        if not has_dingtalk and not scheme.get('wechat_enabled') and not has_wxpusher:
+        has_bark = bool(scheme.get('bark_enabled'))
+        if not has_dingtalk and not scheme.get('wechat_enabled') and not has_wxpusher and not has_bark:
             return
 
         try:
@@ -380,7 +384,7 @@ class SMZDMMonitor:
 
                     public_image_url = ""
                     wechat_image_path = ""
-                    if pic_url:
+                    if pic_url and (has_dingtalk or has_wxpusher):
                         public_image_url = await self.get_dingtalk_image_url(pic_url)
                         if public_image_url:
                             logger.info("Product image public URL: %s", public_image_url)
@@ -477,6 +481,28 @@ class SMZDMMonitor:
                             )
                             sent_success = sent_success or success
 
+                    if has_bark:
+                        try:
+                            bark_config = BarkConfig.model_validate(self.db.get_bark_config(scheme['id']))
+                            bark_body = "\n".join(filter(None, [
+                                f"价格: {price_text}", f"商城: {mall}",
+                                f"发布时间: {product_time}" if product_time else "",
+                            ]))
+                            success = await self.bark_notifier.send_message(
+                                bark_config, product_title, bark_body,
+                                {"scheme": scheme['name'], "mall": mall,
+                                 "keyword": product.get('matched_keyword', ''), "url": article_url},
+                                image=self.normalize_image_url(pic_url),
+                            )
+                        except ValueError:
+                            logger.warning("Bark configuration is invalid")
+                            success = False
+                        self.db.add_notification_log(
+                            scheme['id'], product.get('db_id'), 'bark',
+                            'success' if success else 'failed', '' if success else 'send failed',
+                        )
+                        sent_success = sent_success or success
+
                     if sent_success:
                         self.db.mark_as_notified(product.get('db_id'))
                         logger.info("Product notification sent: %s", product_title[:30])
@@ -545,6 +571,7 @@ class SMZDMMonitor:
         self.tasks.clear()
         await self.notifier.close()
         await self.wechat_notifier.close()
+        await self.bark_notifier.close()
         await self.image_cache.close()
         logger.info("Monitor system stopped")
 

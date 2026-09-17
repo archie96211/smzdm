@@ -439,3 +439,14 @@ python -m compileall desktop_app.py start.py src
 ---
 
 最后更新：2026-06-28
+
+
+## Bark 通知扩展
+
+- `src/bark_notifier.py`：Pydantic 配置校验、模板、异步 HTTP、AES-CBC/GCM 加密。使用 cryptography；不新增后台进程或浏览器依赖。
+- 数据迁移增加 `monitor_schemes.bark_enabled` / `bark_config`，同步更新列白名单；空的方案配置继承 `global_settings.bark_config`。
+- `/api/bark/settings` 和 `/api/test-bark` 为独立配置/测试入口，可选 `scheme_id`；通用方案/全局设置接口不返回 Bark 私密配置，专用读取接口也不返回密钥。
+- `BarkModal.jsx` 使用现有 shadcn/ui + TanStack Query；保存配置和测试分开，测试不持久化表单。
+- `tests/bark_checks.py` 是脱敏离线测试，文件名有意避开现有 `test_*.py` 忽略规则。
+- 维持首次采集不推送、商品去重、各渠道日志及客户端 session 关闭行为。Bark-only 方案不下载钉钉图片。
+- `ttl` 是 iOS 归档消息保留时效，不能描述成服务器投递 TTL；端到端加密也不能描述成 SQLite 静态加密。
