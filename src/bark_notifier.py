@@ -41,7 +41,9 @@ class BarkConfig(BaseModel):
     @field_validator("server_url", "icon")
     @classmethod
     def validate_url(cls, value: str, info) -> str:
-        value = value.strip().rstrip("/")
+        value = value.strip()
+        if info.field_name == "server_url":
+            value = value.rstrip("/")
         if not value and info.field_name == "icon":
             return value
         parts = urlsplit(value)

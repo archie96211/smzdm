@@ -114,6 +114,10 @@ class PayloadChecks(unittest.TestCase):
                         payload["iv"], build_payload(config, "t", "b", {})["iv"]
                     )
 
+    def test_icon_url_preserves_query_and_trailing_slash(self):
+        icon = "https://example.com/icon?version=/"
+        self.assertEqual(BarkConfig(icon=icon).icon, icon)
+
     def test_invalid_key_url_template_and_ranges(self):
         for values in (
             {"encryption": "GCM", "encryption_key": "short"},
