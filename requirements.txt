@@ -6,3 +6,5 @@ python-multipart==0.0.6
 pywebview==6.2.1
 pystray==0.19.5
 pillow==12.2.0
+
+cryptography==46.0.5

@@ -4,15 +4,15 @@ import { toast } from "sonner";
 import {
   Activity, Bell, CheckCircle2, CircleDollarSign, Clock3,
   ExternalLink, ListChecks, MessageCircle, Moon, PackageOpen,
-  Plus, RefreshCw, Search, Send, Settings, Sparkles, Sun,
-  Tag, Trash2, Zap,
+  MoreHorizontal, Plus, RefreshCw, Search, Send, Settings, Sparkles, Sun,
+  Tag, Trash2, Zap, ShoppingBag,
 } from "lucide-react";
 
 import {
   useSchemes, useMonitorStatus, useSystemInfo, useSchemeDetail,
   useWechatStatus, useCreateScheme, useUpdateScheme, useDeleteScheme,
   useAddKeyword, useUpdateKeyword, useDeleteKeyword, useRestartScheme,
-  useTestWebhook, useTestWechat, useTestWxPusher, useGlobalSettings,
+  useTestWebhook, useTestWechat, useTestWxPusher, useGlobalSettings, useBarkSettings, useManmanbuyStatus,
 } from "@/helpers/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
@@ -35,6 +35,11 @@ import SettingsModal from "@/components/modals/SettingsModal";
 import WechatModal from "@/components/modals/WechatModal";
 import DingtalkModal from "@/components/modals/DingtalkModal";
 import WxPusherModal from "@/components/modals/WxPusherModal";
+import BarkIcon from "@/components/BarkIcon";
+import ManmanbuyIcon from "@/components/ManmanbuyIcon";
+import ManmanbuyModal from "@/components/modals/ManmanbuyModal";
+import PurchasePage from "@/components/modals/PurchaseModal";
+import BarkModal from "@/components/modals/BarkModal";
 
 const STATUS_LABELS = {
   online: "在线", connecting: "连接中", reconnecting: "重连中",
@@ -52,7 +57,7 @@ function stripTags(value = "") {
 }
 
 /* ---------- AppSidebar ---------- */
-function AppSidebar({ schemes, status, selectedId, onSelect, onToggle, onNewScheme }) {
+function AppSidebar({ schemes, status, selectedId, page, onSelect, onPurchases, onToggle, onNewScheme }) {
   return (
     <Sidebar collapsible="icon" variant="inset">
       <SidebarHeader>
@@ -61,13 +66,21 @@ function AppSidebar({ schemes, status, selectedId, onSelect, onToggle, onNewSche
             <Sparkles size={18} className="group-data-[collapsible=icon]:size-4" />
           </div>
           <div className="flex flex-col group-data-[collapsible=icon]:hidden">
-            <strong className="text-sm">SMZDM Monitor</strong>
-            <span className="text-xs text-muted-foreground">好价监控桌面版</span>
+            <strong className="text-sm">好价雷达</strong>
+            <span className="text-xs text-muted-foreground">多平台优惠监控</span>
           </div>
         </div>
       </SidebarHeader>
 
       <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupLabel>个人数据</SidebarGroupLabel>
+          <SidebarGroupContent><SidebarMenu><SidebarMenuItem>
+            <SidebarMenuButton isActive={page === "purchases"} onClick={onPurchases} tooltip="我的购买记录" className="h-11">
+              <ShoppingBag size={17} /><span>我的购买记录</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem></SidebarMenu></SidebarGroupContent>
+        </SidebarGroup>
         <SidebarGroup>
           <SidebarGroupLabel>
             <span className="flex items-center gap-1.5">
@@ -87,7 +100,7 @@ function AppSidebar({ schemes, status, selectedId, onSelect, onToggle, onNewSche
                 return (
                   <SidebarMenuItem key={scheme.id}>
                     <SidebarMenuButton
-                      isActive={selectedId === scheme.id}
+                      isActive={page === "monitors" && selectedId === scheme.id}
                       onClick={() => onSelect(scheme.id)}
                       tooltip={scheme.name}
                       className="h-12"
@@ -167,29 +180,17 @@ function MetricCard({ label, value, icon: Icon, color }) {
   );
 }
 
-/* ---------- ProductRow ---------- */
-function ProductRow({ product }) {
-  return (
-    <a
-      href={product.article_url || "#"}
-      target="_blank"
-      rel="noreferrer"
-      className="group/prod flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/20 p-3 no-underline transition-colors hover:bg-muted/40 hover:border-primary/30"
-    >
-      <div className="min-w-0 flex-1">
-        <strong className="block truncate text-sm group-hover/prod:text-primary transition-colors">
-          {product.article_title}
-        </strong>
-        <span className="text-xs text-muted-foreground">
-          {product.keyword} · {product.article_mall || "未知商城"} · {product.article_date || "未知时间"}
-        </span>
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <span className="font-bold text-rose-400 text-sm">{stripTags(product.article_price || "价格未知")}</span>
-        {product.article_url && <ExternalLink size={14} className="text-muted-foreground group-hover/prod:text-primary transition-colors" />}
-      </div>
-    </a>
-  );
+function ProductGroup({ group }) {
+  return <div className="rounded-lg border border-border bg-muted/20 p-3">
+    <strong className="block text-sm">{stripTags(group.title)}</strong>
+    <div className="mt-1 text-xs text-muted-foreground">{group.offers.length > 1 ? "同款候选 · 分别查看来源报价" : "单一来源"}</div>
+    <div className="mt-2 flex flex-col gap-1.5">{group.offers.map((offer) =>
+      <a key={offer.id} href={offer.article_url || "#"} target="_blank" rel="noreferrer"
+        className="flex items-center justify-between gap-2 rounded-md bg-background/70 px-2 py-1.5 text-xs hover:text-primary">
+        <span className="truncate">{offer.article_id?.startsWith("manmanbuy:") ? "慢慢买" : "什么值得买"} · {offer.article_mall || "未知商城"}</span>
+        <span className="flex shrink-0 items-center gap-1 font-semibold text-rose-400">{stripTags(offer.article_price || "价格未知")}{offer.article_url && <ExternalLink size={12} />}</span>
+      </a>)}</div>
+  </div>;
 }
 
 /* ---------- KeywordRow ---------- */
@@ -199,7 +200,7 @@ function KeywordRow({ keyword, onEdit, onDelete }) {
       <div className="min-w-0 flex-1">
         <strong className="block truncate text-sm">{keyword.keyword}</strong>
         <span className="text-xs text-muted-foreground">
-          {keyword.order_type} · {moneyRange(keyword)}
+          {keyword.source === "both" ? "双来源" : keyword.source === "manmanbuy" ? "慢慢买" : "什么值得买"} · {moneyRange(keyword)}
         </span>
       </div>
       <div className="flex shrink-0 gap-1 opacity-0 transition-opacity group-hover/kw:opacity-100">
@@ -212,7 +213,7 @@ function KeywordRow({ keyword, onEdit, onDelete }) {
 
 /* ---------- DetailView ---------- */
 function DetailView({ detail, selectedRuntime, wechatAccounts, globalWebhook, onEdit, onToggle, onRestart, onDelete,
-  onAddKeyword, onEditKeyword, onDeleteKeyword, onTestWebhook, onTestWechat, onOpenWechat, onTestWxPusher }) {
+  onAddKeyword, onEditKeyword, onDeleteKeyword, onTestWebhook, onTestWechat, onOpenWechat, onTestWxPusher, onOpenBark }) {
   return (
     <div className="flex flex-col gap-4">
       {/* Hero */}
@@ -284,11 +285,11 @@ function DetailView({ detail, selectedRuntime, wechatAccounts, globalWebhook, on
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base">最近发现</CardTitle>
-            <CardDescription>最多显示 50 条历史商品</CardDescription>
+            <CardDescription>最多显示 50 条历史报价，相同商品按来源合并</CardDescription>
           </CardHeader>
           <CardContent className="flex max-h-[400px] flex-col gap-2 overflow-auto pt-0">
-            {(detail.recent_products || []).map((product) => (
-              <ProductRow key={product.id} product={product} />
+            {(detail.recent_product_groups || []).map((group) => (
+              <ProductGroup key={group.offers[0].id} group={group} />
             ))}
             {!detail.recent_products?.length && (
               <div className="flex flex-col items-center gap-2 p-8 text-center text-muted-foreground">
@@ -349,6 +350,9 @@ function DetailView({ detail, selectedRuntime, wechatAccounts, globalWebhook, on
             {detail.wxpusher_enabled && (
               <Button variant="outline" size="sm" onClick={() => onTestWxPusher(detail)}>测试 WxPusher</Button>
             )}
+            <Separator orientation="vertical" className="h-6" />
+            <span className="text-sm">{detail.bark_enabled ? "Bark 已启用" : "Bark 未启用"}</span>
+            <Button variant="outline" size="sm" onClick={onOpenBark}>配置 Bark</Button>
           </div>
         </CardContent>
       </Card>
@@ -410,6 +414,8 @@ function DetailSkeleton() {
 export default function App() {
   const [theme, setTheme] = useState(() => localStorage.getItem("theme") || "dark");
   const [selectedId, setSelectedId] = useState(null);
+  const [page, setPage] = useState("monitors");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [modal, setModal] = useState(null);
   const [appInfo, setAppInfo] = useState(null);
 
@@ -421,6 +427,19 @@ export default function App() {
   const { data: detail, isLoading: detailLoading } = useSchemeDetail(selectedId);
   const { data: wechatData = { status: null, accounts: [], conversations: [] } } = useWechatStatus();
   const { data: globalSettings } = useGlobalSettings();
+  const { data: manmanbuyStatus } = useManmanbuyStatus();
+  useEffect(() => {
+    if (["expired", "verification_required"].includes(manmanbuyStatus?.state)) {
+      toast.warning(manmanbuyStatus.message, {
+        id: "manmanbuy-reconnect", duration: Infinity,
+        action: { label: "重新连接", onClick: () => setModal({ type: "manmanbuy" }) },
+      });
+    } else {
+      toast.dismiss("manmanbuy-reconnect");
+    }
+  }, [manmanbuyStatus?.state]);
+  const { data: barkSettings } = useBarkSettings();
+  const barkConfigured = Boolean(barkSettings?.config?.has_device_key);
   const globalWebhook = globalSettings?.dingtalk_webhook?.value || "";
   const globalSecret = globalSettings?.dingtalk_secret?.value || "";
   const globalWxPusherToken = globalSettings?.wxpusher_app_token?.value || "";
@@ -596,7 +615,9 @@ export default function App() {
         schemes={schemes}
         status={status}
         selectedId={selectedId}
-        onSelect={setSelectedId}
+        page={page}
+        onSelect={(id) => { setSelectedId(id); setPage("monitors"); }}
+        onPurchases={() => setPage("purchases")}
         onToggle={handleToggleScheme}
         onNewScheme={() => setModal({ type: "scheme", mode: "create" })}
       />
@@ -605,17 +626,24 @@ export default function App() {
         {/* Top bar */}
         <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center gap-2 border-b border-border bg-background/80 px-4 backdrop-blur-sm">
           <SidebarTrigger className="-ml-1" />
-          <Separator orientation="vertical" className="mr-2 h-4" />
-          <div className="flex flex-1 items-center gap-2">
-            <h1 className="text-lg font-semibold">什么值得买好价监控</h1>
+          <Separator orientation="vertical" className="mr-2 hidden h-4 sm:block" />
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <h1 className="truncate whitespace-nowrap text-lg font-semibold">{page === "purchases" ? "我的购买记录" : "好价雷达"}</h1>
             {status.running && (
-              <Badge variant="success" className="gap-1">
+              <Badge variant="success" className="hidden gap-1 sm:flex">
                 <span className="flex size-1.5 rounded-full bg-green-500 animate-pulse" />
                 运行中
               </Badge>
             )}
           </div>
-          <div className="flex items-center gap-1">
+          <div className="relative sm:hidden">
+            <Button variant="ghost" size="icon" aria-label="更多操作" aria-expanded={mobileMenuOpen} onClick={() => setMobileMenuOpen((open) => !open)}><MoreHorizontal size={20} /></Button>
+            {mobileMenuOpen && <div className="absolute right-0 top-full z-50 mt-2 w-48 rounded-lg border border-border bg-popover p-1 shadow-lg">
+              {[["我的购买记录", () => setPage("purchases")], ["Bark 通知设置", () => setModal({ type: "bark" })], ["钉钉通知", () => setModal({ type: "dingtalk" })], ["微信通知", () => setModal({ type: "wechat" })], ["WxPusher 通知", () => setModal({ type: "wxpusher" })], ["慢慢买历史价格", () => setModal({ type: "manmanbuy" })], ["刷新全部", handleRefreshAll], ["全局设置", () => setModal({ type: "settings" })], ["切换主题", () => setTheme(theme === "dark" ? "light" : "dark")]].map(([label, action]) =>
+                <button key={label} type="button" className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-accent hover:text-accent-foreground" onClick={() => { action(); setMobileMenuOpen(false); }}>{label}</button>)}
+            </div>}
+          </div>
+          <div className="hidden items-center gap-1 sm:flex">
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button variant="ghost" size="icon" onClick={() => setModal({ type: "dingtalk" })} className="relative">
@@ -648,6 +676,34 @@ export default function App() {
               <TooltipContent>
                 {wxpusherConfigured ? "WxPusher 已配置" : "WxPusher 未配置，点击设置"}
               </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon" aria-label="Bark 通知设置" onClick={() => setModal({ type: "bark" })} className="relative">
+                  <BarkIcon size={18} />
+                  <span className={`absolute right-1 top-1 size-2 rounded-full border border-background ${barkConfigured ? "bg-green-500" : "bg-muted-foreground/50"}`} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {barkConfigured ? "Bark 已配置" : "Bark 未配置，点击设置"}
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon" aria-label="我的购买记录" onClick={() => setPage("purchases")}>
+                  <ShoppingBag size={18} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>我的购买记录</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon" aria-label="慢慢买历史价格" onClick={() => setModal({ type: "manmanbuy" })} className="relative">
+                  <ManmanbuyIcon size={18} />
+                  {['expired', 'verification_required'].includes(manmanbuyStatus?.state) && <span className="absolute right-1 top-1 size-2 rounded-full bg-destructive" />}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{manmanbuyStatus?.message || "连接慢慢买"}</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -684,14 +740,14 @@ export default function App() {
         {/* Main content */}
         <div className="flex flex-1 flex-col gap-4 p-4">
           {/* Metrics row */}
-          <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {page === "monitors" && <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {metrics.map(({ label, value, icon: Icon, color }) => (
               <MetricCard key={label} label={label} value={value} icon={Icon} color={color} />
             ))}
-          </section>
+          </section>}
 
           {/* Detail or Welcome */}
-          {selectedId ? (
+          {page === "purchases" ? <PurchasePage /> : selectedId ? (
             detailLoading && !detail ? (
               <DetailSkeleton />
             ) : detail ? (
@@ -709,6 +765,7 @@ export default function App() {
                 onDeleteKeyword={handleDeleteKeyword}
                 onTestWebhook={handleTestWebhook}
                 onTestWechat={handleTestWechat}
+                onOpenBark={() => setModal({ type: "bark", schemeId: detail.id })}
                 onOpenWechat={() => setModal({ type: "wechat" })}
                 onTestWxPusher={handleTestWxPusher}
               />
@@ -749,8 +806,10 @@ export default function App() {
           onSubmit={modal.mode === "edit" ? handleUpdateKeyword : handleAddKeyword}
         />
       )}
+      {modal?.type === "manmanbuy" && <ManmanbuyModal onClose={() => setModal(null)} />}
       {modal?.type === "settings" && <SettingsModal onClose={() => setModal(null)} />}
       {modal?.type === "dingtalk" && <DingtalkModal onClose={() => setModal(null)} />}
+      {modal?.type === "bark" && <BarkModal schemeId={modal.schemeId} onClose={() => setModal(null)} />}
       {modal?.type === "wxpusher" && <WxPusherModal onClose={() => setModal(null)} />}
       {modal?.type === "wechat" && (
         <WechatModal

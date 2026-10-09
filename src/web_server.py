@@ -6,8 +6,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import ipaddress
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -15,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import runtime
+from .bark_notifier import BarkConfig, BarkNotifier, merge_config, public_config
 from .database import DatabaseManager
 from .dingtalk_notifier import DingTalkNotifier
 from .monitor import SMZDMMonitor
@@ -25,7 +27,7 @@ from .wxpusher_notifier import WxPusherNotifier
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="什么值得买好价监控系统", version="2.0.0")
+app = FastAPI(title="好价雷达", version="2.0.0")
 
 db = DatabaseManager(str(runtime.get_database_path()))
 notifier = DingTalkNotifier()
@@ -42,12 +44,14 @@ class SchemeCreate(BaseModel):
     name: str
     description: str = ""
     keyword: str = ""
-    refresh_interval: int = 60
+    keyword_source: Literal["smzdm", "manmanbuy", "both"] = "smzdm"
+    refresh_interval: int = Field(default=300, ge=60, le=86400)
     dingtalk_webhook: str = ""
     dingtalk_secret: str = ""
     wechat_enabled: bool = False
     wechat_account_id: str = ""
     wechat_targets: str = ""
+    bark_enabled: bool = False
     wxpusher_enabled: bool = False
     wxpusher_app_token: str = ""
     wxpusher_uid: str = ""
@@ -56,12 +60,13 @@ class SchemeCreate(BaseModel):
 class SchemeUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
-    refresh_interval: Optional[int] = None
+    refresh_interval: Optional[int] = Field(default=None, ge=60, le=86400)
     dingtalk_webhook: Optional[str] = None
     dingtalk_secret: Optional[str] = None
     wechat_enabled: Optional[bool] = None
     wechat_account_id: Optional[str] = None
     wechat_targets: Optional[str] = None
+    bark_enabled: Optional[bool] = None
     wxpusher_enabled: Optional[bool] = None
     wxpusher_app_token: Optional[str] = None
     wxpusher_uid: Optional[str] = None
@@ -70,6 +75,7 @@ class SchemeUpdate(BaseModel):
 
 class KeywordCreate(BaseModel):
     keyword: str
+    source: Literal["smzdm", "manmanbuy", "both"] = "smzdm"
     category_id: str = ""
     brand_id: str = ""
     mall_id: str = ""
@@ -80,6 +86,7 @@ class KeywordCreate(BaseModel):
 
 class KeywordUpdate(BaseModel):
     keyword: Optional[str] = None
+    source: Optional[Literal["smzdm", "manmanbuy", "both"]] = None
     category_id: Optional[str] = None
     brand_id: Optional[str] = None
     mall_id: Optional[str] = None
@@ -98,7 +105,7 @@ class TestWeChatRequest(BaseModel):
     account_id: str = ""
     conversation_id: str = ""
     targets: str = ""
-    text: str = "SMZDM Monitor WeChat test"
+    text: str = "好价雷达微信通知测试"
     media_url: str = ""
     media_path: str = ""
 
@@ -202,7 +209,17 @@ _mount_static()
 @app.middleware("http")
 async def limit_public_access(request: Request, call_next):
     client_host = request.client.host if request.client else ""
-    if allow_public_api or is_loopback_host(client_host) or request.url.path.startswith("/images/"):
+    try:
+        lan_allowed = any(ipaddress.ip_address(client_host) in ipaddress.ip_network(c.strip())
+                          for c in os.getenv("SMZDM_ALLOWED_NETWORKS", "").split(",") if c.strip())
+    except ValueError:
+        lan_allowed = False
+    if allow_public_api or lan_allowed or is_loopback_host(client_host) or request.url.path.startswith("/images/"):
+        if request.url.path.startswith("/api/wechat/") and os.getenv("SMZDM_WECHAT_BRIDGE_ENABLED", "true").lower() != "true":
+            if request.method == "GET":
+                data = {"enabled": False, "running": False, "account": None} if request.url.path.endswith("/status") else ([] if request.url.path.endswith("/conversations") else None)
+                return JSONResponse({"success": True, "data": data, "message": "此部署未启用微信桥接"})
+            return JSONResponse({"success": False, "message": "此部署未启用微信桥接"}, status_code=503)
         return await call_next(request)
     return JSONResponse(
         {"success": False, "message": "公网访问默认只开放图片缓存 /images/。"},
@@ -315,6 +332,77 @@ async def _sync_scheme_monitor_state(scheme_id: int, update_data: dict) -> None:
         await monitor.restart_scheme(scheme_id)
 
 
+@app.get("/api/metrics")
+async def metrics():
+    return {"success": True, "data": monitor.fetch_metrics}
+
+def _public_scheme(scheme: dict) -> dict:
+    return {key: value for key, value in scheme.items() if key != "bark_config"}
+
+
+class BarkSettingsRequest(BaseModel):
+    config: dict = Field(default_factory=dict)
+    use_global: bool = False
+    enabled: Optional[bool] = None
+    clear_secrets: list[str] = Field(default_factory=list)
+
+
+def _resolve_bark_request(request: BarkSettingsRequest, scheme_id: Optional[int]) -> BarkConfig:
+    if scheme_id is not None and not db.get_scheme(scheme_id):
+        raise HTTPException(status_code=404, detail="方案不存在")
+    previous = db.get_bark_config(scheme_id)
+    try:
+        if scheme_id is not None and request.use_global:
+            return BarkConfig.model_validate(db.get_bark_config())
+        return merge_config(request.config, previous, request.clear_secrets)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Bark 配置无效：请检查 URL、模板、数值范围和 AES 密钥字节数") from None
+
+
+@app.get("/api/bark/settings")
+async def get_bark_settings(scheme_id: Optional[int] = None):
+    scheme = db.get_scheme(scheme_id) if scheme_id is not None else None
+    if scheme_id is not None and scheme is None:
+        raise HTTPException(status_code=404, detail="方案不存在")
+    config = BarkConfig.model_validate(db.get_bark_config(scheme_id))
+    return {"success": True, "data": {
+        "config": public_config(config),
+        "use_global": bool(scheme is not None and not scheme.get("bark_config")),
+        "enabled": bool(scheme and scheme.get("bark_enabled")),
+    }}
+
+
+@app.put("/api/bark/settings")
+async def save_bark_settings(request: BarkSettingsRequest, scheme_id: Optional[int] = None):
+    config = _resolve_bark_request(request, scheme_id)
+    if request.enabled and not config.device_key:
+        raise HTTPException(status_code=422, detail="启用 Bark 前请填写设备 Key")
+    if scheme_id is None:
+        db.set_config("bark_config", config.model_dump_json(), "Bark notification settings")
+    else:
+        updates = {"bark_config": "" if request.use_global else config.model_dump_json()}
+        if request.enabled is not None:
+            updates["bark_enabled"] = request.enabled
+        db.update_scheme(scheme_id, **updates)
+        await _sync_scheme_monitor_state(scheme_id, updates)
+    return {"success": True, "message": "Bark 配置已保存"}
+
+
+@app.post("/api/test-bark")
+async def test_bark(request: BarkSettingsRequest, scheme_id: Optional[int] = None):
+    config = _resolve_bark_request(request, scheme_id)
+    sender = BarkNotifier()
+    try:
+        scheme = db.get_scheme(scheme_id) if scheme_id is not None else None
+        success = await sender.send_message(
+            config, "SMZDM Bark 测试", "这是一条测试通知，请在设备上确认分组、图标和加密效果。",
+            {"scheme": scheme["name"] if scheme else "测试方案", "mall": "测试商城", "keyword": "测试", "url": "https://www.smzdm.com"},
+        )
+        return {"success": success, "message": "Bark 服务已接受，请在设备上确认" if success else "Bark 发送失败，请检查配置与服务状态"}
+    finally:
+        await sender.close()
+
+
 @app.get("/api/health")
 async def health():
     return {"success": True, "status": "ok"}
@@ -326,13 +414,13 @@ async def read_root():
     if html_path.exists():
         return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
     return HTMLResponse(
-        content="<html><body><h1>SMZDM Monitor</h1><p>前端资源尚未构建，请运行 npm run build。</p></body></html>"
+        content="<html><body><h1>好价雷达</h1><p>前端资源尚未构建，请运行 npm run build。</p></body></html>"
     )
 
 
 @app.get("/api/schemes")
 async def get_schemes():
-    return {"success": True, "data": db.get_schemes()}
+    return {"success": True, "data": [_public_scheme(s) for s in db.get_schemes()]}
 
 
 @app.get("/api/schemes/{scheme_id}")
@@ -342,8 +430,10 @@ async def get_scheme(scheme_id: int):
         raise HTTPException(status_code=404, detail="方案不存在")
     scheme["keywords"] = db.get_keywords(scheme_id)
     scheme["recent_products"] = db.get_recent_products(scheme_id, 50)
+    from .deal_groups import group_offers
+    scheme["recent_product_groups"] = group_offers(scheme["recent_products"])
     scheme["notification_stats"] = db.get_notification_stats(scheme_id)
-    return {"success": True, "data": scheme}
+    return {"success": True, "data": _public_scheme(scheme)}
 
 
 @app.post("/api/schemes")
@@ -356,6 +446,8 @@ async def create_scheme(scheme: SchemeCreate):
             raise ValueError("方案名称不能为空")
         if not initial_keyword:
             raise ValueError("新建方案必须填写关键词")
+        if scheme.bark_enabled and not db.get_bark_config().get("device_key"):
+            raise ValueError("请先配置全局 Bark 设备 Key，再启用通知")
         scheme_id = db.create_scheme(
             name=name,
             description=scheme.description,
@@ -365,11 +457,12 @@ async def create_scheme(scheme: SchemeCreate):
             wechat_enabled=scheme.wechat_enabled,
             wechat_account_id=scheme.wechat_account_id.strip(),
             wechat_targets=wechat_targets,
+            bark_enabled=scheme.bark_enabled,
             wxpusher_enabled=scheme.wxpusher_enabled,
             wxpusher_app_token=scheme.wxpusher_app_token.strip(),
             wxpusher_uid=scheme.wxpusher_uid.strip(),
         )
-        db.add_keyword(scheme_id, initial_keyword)
+        db.add_keyword(scheme_id, initial_keyword, source=scheme.keyword_source)
         await send_scheme_configured_notice(scheme_id)
         if monitor.running and monitor_task and not monitor_task.done():
             await monitor.restart_scheme(scheme_id)
@@ -388,6 +481,8 @@ async def update_scheme(scheme_id: int, scheme: SchemeUpdate):
     existing_scheme = db.get_scheme(scheme_id)
     if not existing_scheme:
         raise HTTPException(status_code=404, detail="方案不存在")
+    if update_data.get("bark_enabled") and not db.get_bark_config(scheme_id).get("device_key"):
+        raise HTTPException(status_code=422, detail="请先配置 Bark 设备 Key，再启用通知")
     next_wechat_enabled = update_data.get("wechat_enabled", existing_scheme.get("wechat_enabled"))
     next_wechat_targets = str(update_data.get("wechat_targets", existing_scheme.get("wechat_targets") or "")).strip()
     if "wechat_targets" in update_data or next_wechat_enabled:
@@ -430,6 +525,7 @@ async def add_keyword(scheme_id: int, keyword: KeywordCreate):
             order_type=keyword.order_type,
             price_min=keyword.price_min,
             price_max=keyword.price_max,
+            source=keyword.source,
         )
         if monitor.running and scheme_id not in monitor.tasks:
             await monitor.restart_scheme(scheme_id)
@@ -545,7 +641,7 @@ async def test_wechat(request: TestWeChatRequest):
             "account_id": request.account_id.strip(),
             "conversation_id": request.conversation_id.strip(),
             "targets": request.targets.strip(),
-            "text": request.text.strip() or "SMZDM Monitor WeChat test",
+            "text": request.text.strip() or "好价雷达微信通知测试",
             "media_url": request.media_url.strip(),
             "media_path": request.media_path.strip(),
         })
@@ -587,13 +683,13 @@ async def get_system_info():
 
 @app.get("/api/global-settings")
 async def get_global_settings():
-    return {"success": True, "data": db.get_global_settings()}
+    return {"success": True, "data": {k: v for k, v in db.get_global_settings().items() if k != "bark_config"}}
 
 
 @app.put("/api/global-settings")
 async def update_global_settings(settings: GlobalSettingsUpdate):
     db.update_global_settings(settings.model_dump())
-    return {"success": True, "message": "全局设置已更新", "data": db.get_global_settings()}
+    return {"success": True, "message": "全局设置已更新", "data": {k: v for k, v in db.get_global_settings().items() if k != "bark_config"}}
 
 
 # Reference to uvicorn Server instance, set by run_server_mode or __main__
@@ -637,8 +733,9 @@ async def startup_event():
     global auto_start_task
     runtime.ensure_runtime_dirs()
     configure_image_server_defaults()
-    await wechat_bridge.start()
-    logger.info("SMZDM Web server started at %s", runtime.get_server_base_url())
+    if os.getenv("SMZDM_WECHAT_BRIDGE_ENABLED", "true").lower() == "true":
+        await wechat_bridge.start()
+    logger.info("好价雷达 Web server started at %s", runtime.get_server_base_url())
     if auto_start_monitor:
         auto_start_task = asyncio.create_task(_auto_start_monitor_later(), name="smzdm-monitor-auto-start")
 
@@ -646,7 +743,7 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     global auto_start_task
-    logger.info("SMZDM Web server shutting down")
+    logger.info("好价雷达 Web server shutting down")
     if auto_start_task and not auto_start_task.done():
         auto_start_task.cancel()
         await asyncio.gather(auto_start_task, return_exceptions=True)
@@ -654,6 +751,18 @@ async def shutdown_event():
     await _stop_monitor_task()
     await notifier.close()
     await wechat_bridge.stop()
+
+
+from .automation_api import install as install_automation_api
+import sys
+install_automation_api(app, sys.modules[__name__])
+
+from .manmanbuy import install as install_manmanbuy
+manmanbuy_connection = install_manmanbuy(app, runtime.get_data_dir(), db)
+monitor.history_connection = manmanbuy_connection
+
+from .purchase_ledger import install as install_purchase_ledger
+install_purchase_ledger(app, db)
 
 
 if __name__ == "__main__":

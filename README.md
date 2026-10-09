@@ -1,21 +1,24 @@
-# SMZDM Bot — 什么值得买好价监控桌面机器人
+# 好价雷达 — 多平台优惠监控
 
-> Windows 桌面常驻工具，实时监控什么值得买好价商品，关键词筛选后自动推送到钉钉、微信和 WxPusher。
+> 多来源优惠监控、个人购买记录与按需比价，支持桌面和容器部署。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows-blue.svg)](https://github.com/archie96211/smzdm)
 
-SMZDM Bot 是一个 Windows 桌面端的好价监控机器人。它定时检索什么值得买 API，按关键词和价格区间筛选商品，通过钉钉机器人 ActionCard、微信或 WxPusher 实时推送新增好价信息。自带 Web 管理界面，支持系统托盘常驻，适合 Windows Server 和个人电脑 7x24 小时运行。
+好价雷达定时检索什么值得买和慢慢买好价，按关键词和价格区间筛选、聚合并推送新优惠；也保存个人购买记录，供 MCP 在用户提问时按需查询历史价和核验单价。现有 Git 仓库、运行配置和 MCP 命令中的 `smzdm` 是兼容标识，改名不会迁移或删除已有数据。
 
 ## 项目特点
 
-与现有的什么值得买监控项目相比，SMZDM Bot 提供：
+好价雷达提供：
 
 - **桌面 Web 管理界面** — React 19 + shadcn/ui，可视化配置监控方案、关键词和通知渠道
 - **微信扫码推送** — 基于微信桥接，扫码绑定后直接推送图文消息到微信好友或群
 - **钉钉 ActionCard 图文通知** — 商品图片、标题、价格、时间一体化展示
 - **WxPusher 推送** — 基于 [WxPusher](https://wxpusher.zjiecode.com/) 开源平台，支持 Markdown 图文消息，推送到微信/APP，无需保活
 - **多方案并行监控** — 每个方案独立关键词、价格区间、通知渠道
+- **多来源好价** — 每个关键词可选择什么值得买、慢慢买或两者；原有关键词默认沿用什么值得买。慢慢买公开好价搜索不需要登录，扫码登录用于历史价查询。每个来源首次抓取只建立基线，不推送旧商品。慢慢买页面变更或触发验证时会记录来源错误，其他来源继续运行。
+- **个人购买记录** — 在侧栏“我的购买记录”搜索全部历史、按购买渠道筛选，并从商品卡片查看规格与单价；保存购买平台、可选订单号与店铺、实付、包装数量及可选内包装数量，换算每箱、每袋/罐和每张、每公斤等单位成本。数据保存在 SQLite，MCP 可管理和查询记录供 AI 总结，无需在服务端配置模型 API。
+- **价格留痕** — 同一条好价的价格文字变化与手动查询的慢慢买历史价结果保存在 SQLite。优惠券、淘金币等复杂价格保留原文，不直接当作可比较到手价。
 - **Windows 系统托盘** — 后台常驻，双击 EXE 即用，无需命令行
 
 ## 技术架构
@@ -361,6 +364,52 @@ POST https://wxpusher.zjiecode.com/api/send/message
 }
 ```
 
+## Bark 通知
+
+[Bark](https://github.com/Finb/Bark) 可将优惠推送到 iPhone，支持官方或自建服务。
+
+1. 点击顶栏 **Bark 图标**，粘贴 Bark App 复制的完整推送地址（包含设备 Key）。支持自建服务和反向代理路径；保存后不会回显完整地址，留空保持原配置。
+2. 设置分组、图标、声音、提醒级别、是否保存及保存时效，按需配置消息加密。
+链接打开方式默认使用原始网页链接，可切换为 **App 直达**：好价详情使用 `smzdm://youhui/文章ID`，正文保留备用网页地址。未安装 App 时不会自动回退，需要手动打开备用地址；其他链接保持原样。网页模式是否唤起 App 由系统和目标 App 决定。
+
+3. 点击 **发送测试**。接口成功只表示 Bark 服务接受请求，仍需在手机确认收到通知及展示效果。
+4. 在监控方案中启用 Bark；详情页的 **配置 Bark** 可切换全局配置或为该方案保存完整的独立配置。切回全局会删除该方案的覆盖配置。
+
+### 可配置选项
+
+| 选项 | 行为 |
+|---|---|
+| 分组 | 新配置默认 `好价雷达 · {scheme}`；已有分组保持原值。支持 `{scheme}`、`{mall}`、`{keyword}`、`{url}`，留空不指定 |
+| 图标 / 商品图片 | 自定义 HTTP(S) 图标；商品图片可单独开关。图标需要 iOS 15+，同一 URL 会被客户端缓存 |
+| 保存历史 | 跟随 App、保存、不保存 |
+| 保存时效 `ttl` | 秒数，留空不指定过期，`0` 不保存；`86400` 为一天。仅对归档消息生效，由支持此参数的 Bark App 清理，不是 APNs 离线投递期限 |
+| 铃声 / 提醒级别 | 自定义铃声；被动、正常、时效性、重要警告；重要警告音量 0–10，实际行为依赖设备权限 |
+| 角标 / 重复响铃 | 可选角标和重复响铃开关，默认不额外指定 |
+| 点击 / 复制 | 是否打开优惠链接；复制开关与自定义复制内容，支持上述占位符。新版 iOS 需手动长按复制 |
+| 加密 | 关闭、AES-CBC（PKCS7）、AES-GCM；16/24/32 UTF-8 字节密钥对应 AES-128/192/256 |
+
+### 加密与凭据
+
+- 在 Bark App 设置相同的 AES 算法、模式和密钥。每条消息使用新随机 IV，GCM 的密文包含认证标签；标题、正文、分组、图标、跳转和保存参数均在密文内。
+- 加密失败不会回退明文。加密不隐藏接收设备 Key，也不等于数据库静态加密。
+- 设备 Key 和 AES 密钥保存在运行时 SQLite 中；管理接口只返回“已保存”状态。编辑留空保留旧值，需要删除时显式勾选清除。请保护数据目录和管理界面访问。
+- 测试使用当前表单但不会保存配置，不会向商品历史写入模拟优惠。实际商品通知按原有逻辑写入渠道日志；首次采集仍不推送旧商品。
+- HTTP 错误、API 拒绝、超时均记为发送失败，不记录服务响应正文、密钥、请求体或异常 URL；不自动重试，以免重复通知。
+
+接口：`GET/PUT /api/bark/settings`、`POST /api/test-bark`，添加 `?scheme_id=<id>` 管理或测试单个方案。
+
+协议依据：[官方参数](https://github.com/Finb/Bark/blob/master/docs/tutorial.md)、[加密说明](https://github.com/Finb/Bark/blob/master/docs/encryption.md)、[服务端 API](https://github.com/Finb/bark-server/blob/master/docs/API_V2.md)。
+
+离线验证（不发送到外部服务）：
+
+```sh
+python -m unittest discover -s tests -p '*checks.py' -v
+python -m compileall desktop_app.py start.py src
+npm run build
+```
+
+测试需要后端依赖及 `httpx==0.27.2`。覆盖原依赖版本；Windows EXE 打包与手机展示需在对应平台另行验证。
+
 ## 端口和安全
 
 默认端口：
@@ -483,6 +532,7 @@ PUT /api/global-settings
 POST /api/test-webhook
 POST /api/test-wechat
 POST /api/test-wxpusher
+POST /api/test-bark
 ```
 
 微信：
@@ -623,3 +673,13 @@ go test ./...
 ---
 
 最后更新：2026-06-29（v2.2 新增 WxPusher 推送渠道）
+
+## AI 管理：MCP 与 Skill
+
+MCP 与 Skill 是本项目的一部分，随同一仓库维护。后台只采集、聚合、去重并推送基础报价，不逐条调用模型。你把感兴趣的商品链接发给 AI 后，MCP 才按需查历史价、挑选少量已购记录供模型判断可比性，并由本地工具核验模型提出的价格算式。模型费用只发生在你主动发起的对话中。
+
+- [安装、配置与使用](mcp/docs/installation.md)
+- [MCP 能力及限制](mcp/README.md)
+- [Skill](skills/smzdm-monitor/SKILL.md)
+
+监控服务可单独运行于 Docker；AI 客户端按需启动 MCP，无需向监控容器安装 MCP 依赖。

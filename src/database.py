@@ -1,14 +1,23 @@
 #!/usr/bin/env python3
 """
-什么值得买好价监控系统 - 数据库模块
+好价雷达 - 数据库模块
 """
 
 import sqlite3
 import json
+import re
+from decimal import Decimal
 from contextlib import contextmanager
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple, Iterator
 import os
+
+
+def simple_price_cents(value) -> Optional[int]:
+    """Only treat a plain amount as comparable; coupon formulas remain text."""
+    plain = re.sub(r'<[^>]+>', '', str(value or '')).strip()
+    match = re.fullmatch(r'(?:¥|￥)?\s*(\d+(?:\.\d{1,2})?)\s*元?', plain)
+    return int(Decimal(match.group(1)) * 100) if match else None
 
 class DatabaseManager:
     def __init__(self, db_path: str = "smzdm_monitor.db"):
@@ -56,6 +65,8 @@ class DatabaseManager:
                 )
             ''')
             self._ensure_columns(cursor, 'monitor_schemes', {
+                'bark_enabled': 'BOOLEAN DEFAULT 0',
+                'bark_config': "TEXT DEFAULT ''",
                 'wechat_enabled': 'BOOLEAN DEFAULT 0',
                 'wechat_account_id': "TEXT DEFAULT ''",
                 'wechat_targets': "TEXT DEFAULT ''",
@@ -81,6 +92,7 @@ class DatabaseManager:
                     FOREIGN KEY (scheme_id) REFERENCES monitor_schemes (id) ON DELETE CASCADE
                 )
             ''')
+            self._ensure_columns(cursor, 'keywords', {'source': "TEXT DEFAULT 'smzdm'"})
             
             # 商品历史记录表
             cursor.execute('''
@@ -100,6 +112,100 @@ class DatabaseManager:
                     FOREIGN KEY (scheme_id) REFERENCES monitor_schemes (id) ON DELETE CASCADE,
                     FOREIGN KEY (keyword_id) REFERENCES keywords (id) ON DELETE CASCADE,
                     UNIQUE(article_id, keyword_id)
+                )
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS offer_price_observations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    product_history_id INTEGER NOT NULL,
+                    price_text TEXT NOT NULL,
+                    price_cents INTEGER,
+                    first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (product_history_id) REFERENCES product_history (id) ON DELETE CASCADE
+                )
+            ''')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_offer_price_product ON offer_price_observations(product_history_id, id)')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS owned_products (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    measure_unit TEXT NOT NULL,
+                    package_label TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS purchases (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    product_id INTEGER NOT NULL,
+                    purchased_on DATE,
+                    purchase_channel TEXT NOT NULL DEFAULT '',
+                    order_number TEXT NOT NULL DEFAULT '',
+                    store TEXT NOT NULL DEFAULT '',
+                    paid_cents INTEGER NOT NULL CHECK (paid_cents >= 0),
+                    package_count INTEGER NOT NULL CHECK (package_count > 0),
+                    units_per_package TEXT NOT NULL,
+                    note TEXT NOT NULL DEFAULT '',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (product_id) REFERENCES owned_products (id) ON DELETE CASCADE
+                )
+            ''')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_purchases_product ON purchases(product_id, purchased_on)')
+            self._ensure_columns(cursor, 'purchases', {
+                'purchase_channel': "TEXT NOT NULL DEFAULT ''",
+                'order_number': "TEXT NOT NULL DEFAULT ''",
+                'variant': "TEXT NOT NULL DEFAULT ''",
+                'inner_package_count': 'INTEGER',
+                'inner_package_label': "TEXT NOT NULL DEFAULT ''",
+            })
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_purchases_order_number ON purchases(order_number) WHERE order_number != ''")
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS owned_product_links (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    product_id INTEGER NOT NULL,
+                    variant TEXT NOT NULL DEFAULT '',
+                    product_url TEXT NOT NULL UNIQUE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (product_id) REFERENCES owned_products (id) ON DELETE CASCADE
+                )
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS historical_price_checks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    product_url TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    product_name TEXT,
+                    lowest_price TEXT,
+                    lowest_date TEXT,
+                    average_60_days TEXT,
+                    has_history BOOLEAN NOT NULL,
+                    checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_history_checks_url ON historical_price_checks(product_url, checked_at)')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS deal_alert_state (
+                    scheme_id INTEGER NOT NULL,
+                    deal_key TEXT NOT NULL,
+                    best_price_cents INTEGER,
+                    terms TEXT NOT NULL,
+                    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (scheme_id, deal_key),
+                    FOREIGN KEY (scheme_id) REFERENCES monitor_schemes (id) ON DELETE CASCADE
+                )
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS deal_assessments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    scheme_id INTEGER NOT NULL,
+                    deal_key TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    sent_at TIMESTAMP,
+                    UNIQUE(scheme_id, deal_key),
+                    FOREIGN KEY (scheme_id) REFERENCES monitor_schemes (id) ON DELETE CASCADE
                 )
             ''')
             
@@ -164,7 +270,7 @@ class DatabaseManager:
                      wechat_enabled: bool = False, wechat_account_id: str = "",
                      wechat_targets: str = "",
                      wxpusher_enabled: bool = False, wxpusher_app_token: str = "",
-                     wxpusher_uid: str = "") -> int:
+                     wxpusher_uid: str = "", bark_enabled: bool = False) -> int:
         """创建监控方案"""
         with self.connect() as conn:
             cursor = conn.cursor()
@@ -172,13 +278,13 @@ class DatabaseManager:
                 INSERT INTO monitor_schemes (
                     name, description, refresh_interval, dingtalk_webhook, dingtalk_secret,
                     wechat_enabled, wechat_account_id, wechat_targets,
-                    wxpusher_enabled, wxpusher_app_token, wxpusher_uid
+                    wxpusher_enabled, wxpusher_app_token, wxpusher_uid, bark_enabled
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 name, description, refresh_interval, dingtalk_webhook, dingtalk_secret,
                 int(bool(wechat_enabled)), wechat_account_id, wechat_targets,
-                int(bool(wxpusher_enabled)), wxpusher_app_token, wxpusher_uid,
+                int(bool(wxpusher_enabled)), wxpusher_app_token, wxpusher_uid, int(bool(bark_enabled)),
             ))
             return cursor.lastrowid
     
@@ -209,6 +315,7 @@ class DatabaseManager:
             'dingtalk_webhook', 'dingtalk_secret',
             'wechat_enabled', 'wechat_account_id', 'wechat_targets',
             'wxpusher_enabled', 'wxpusher_app_token', 'wxpusher_uid',
+            'bark_enabled', 'bark_config',
             'updated_at',
         }
         for key in kwargs:
@@ -240,8 +347,8 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO keywords (scheme_id, keyword, category_id, brand_id, mall_id, 
-                                    order_type, price_min, price_max)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                    order_type, price_min, price_max, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 scheme_id, keyword,
                 kwargs.get('category_id', ''),
@@ -249,7 +356,7 @@ class DatabaseManager:
                 kwargs.get('mall_id', ''),
                 kwargs.get('order_type', 'time'),
                 kwargs.get('price_min', 0),
-                kwargs.get('price_max', 999999)
+                kwargs.get('price_max', 999999), kwargs.get('source', 'smzdm')
             ))
             return cursor.lastrowid
     
@@ -268,7 +375,7 @@ class DatabaseManager:
 
         _ALLOWED_KEYWORD_COLUMNS = {
             'keyword', 'category_id', 'brand_id', 'mall_id',
-            'order_type', 'price_min', 'price_max', 'is_active',
+            'order_type', 'price_min', 'price_max', 'is_active', 'source',
         }
         for key in kwargs:
             if key not in _ALLOWED_KEYWORD_COLUMNS:
@@ -310,9 +417,129 @@ class DatabaseManager:
                     product_data.get('article_format_date', ''),
                     json.dumps(product_data, ensure_ascii=False)
                 ))
-                return cursor.lastrowid if cursor.rowcount > 0 else None
+                inserted = cursor.rowcount > 0
+                product_id = cursor.lastrowid if inserted else cursor.execute(
+                    'SELECT id FROM product_history WHERE article_id = ? AND keyword_id = ?',
+                    (product_data.get('article_id', ''), keyword_id)).fetchone()[0]
+                price_text = str(product_data.get('article_price') or '').strip()
+                price_changed = False
+                if price_text:
+                    latest = cursor.execute('''
+                        SELECT id, price_text FROM offer_price_observations
+                        WHERE product_history_id = ? ORDER BY id DESC LIMIT 1
+                    ''', (product_id,)).fetchone()
+                    if latest and latest[1] == price_text:
+                        cursor.execute('UPDATE offer_price_observations SET last_seen = CURRENT_TIMESTAMP WHERE id = ?', (latest[0],))
+                    else:
+                        price_changed = latest is not None
+                        cursor.execute('''
+                            INSERT INTO offer_price_observations (product_history_id, price_text, price_cents)
+                            VALUES (?, ?, ?)
+                        ''', (product_id, price_text, simple_price_cents(price_text)))
+                        if price_changed:
+                            cursor.execute('''UPDATE product_history SET article_price=?, raw_data=?
+                                WHERE id=?''', (price_text, json.dumps(product_data, ensure_ascii=False), product_id))
+                return product_id if inserted or price_changed else None
         except sqlite3.IntegrityError:
             return None
+
+    def get_price_observations(self, product_id: int) -> List[Dict]:
+        with self.connect() as conn:
+            conn.row_factory = sqlite3.Row
+            return [dict(row) for row in conn.execute('''
+                SELECT id, price_text, price_cents, first_seen, last_seen
+                FROM offer_price_observations WHERE product_history_id = ? ORDER BY id DESC
+            ''', (product_id,))]
+
+    def record_historical_price_check(self, product_url: str, result: Dict) -> None:
+        from .merchant_links import canonical_product_url
+        canonical_url = canonical_product_url(product_url)
+        if canonical_url is None:
+            raise ValueError("历史价仅接受可识别的商品详情链接")
+        with self.connect() as conn:
+            conn.execute('''
+                INSERT INTO historical_price_checks (product_url, source, product_name, lowest_price,
+                    lowest_date, average_60_days, has_history)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (canonical_url, result['source'], result.get('product_name'), result.get('lowest_price'),
+                  result.get('lowest_date'), result.get('average_60_days'), int(result['has_history'])))
+
+    def get_historical_price_checks(self, limit: int = 30) -> List[Dict]:
+        with self.connect() as conn:
+            conn.row_factory = sqlite3.Row
+            return [dict(row) for row in conn.execute('''
+                SELECT * FROM historical_price_checks ORDER BY id DESC LIMIT ?
+            ''', (min(max(limit, 1), 100),))]
+
+    def recent_historical_price(self, product_url: str, max_age_hours: int = 24):
+        with self.connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute('''
+                SELECT * FROM historical_price_checks WHERE product_url = ?
+                AND checked_at >= datetime('now', ?)
+                ORDER BY id DESC LIMIT 1
+            ''', (product_url, f'-{max_age_hours} hours')).fetchone()
+            return dict(row) if row else None
+
+    def should_send_deal_alert(self, scheme_id: int, deal_key: str, price_cents, terms: str) -> bool:
+        with self.connect() as conn:
+            row = conn.execute('''SELECT best_price_cents, terms FROM deal_alert_state
+                WHERE scheme_id=? AND deal_key=?''', (scheme_id, deal_key)).fetchone()
+            if row is None:
+                return True
+            previous_price, previous_terms = row
+            if price_cents is not None:
+                return previous_price is None or price_cents < previous_price
+            return terms != previous_terms
+
+    def record_deal_alert(self, scheme_id: int, deal_key: str, price_cents, terms: str) -> None:
+        with self.connect() as conn:
+            conn.execute('''INSERT INTO deal_alert_state (scheme_id, deal_key, best_price_cents, terms)
+                VALUES (?, ?, ?, ?) ON CONFLICT(scheme_id, deal_key) DO UPDATE SET
+                best_price_cents = CASE WHEN excluded.best_price_cents IS NULL THEN best_price_cents
+                    WHEN best_price_cents IS NULL THEN excluded.best_price_cents
+                    ELSE min(best_price_cents, excluded.best_price_cents) END,
+                terms = excluded.terms, sent_at = CURRENT_TIMESTAMP''',
+                (scheme_id, deal_key, price_cents, terms))
+
+    def save_deal_assessment(self, scheme_id: int, offer: Dict) -> None:
+        fields = {"article_id", "article_title", "article_price", "article_subtitle", "article_mall",
+                  "article_url", "article_pic", "source", "matched_keyword", "db_id", "product_url", "merchant_item_url",
+                  "history", "history_delta", "comparison", "alert_key", "alert_price_cents", "alert_terms"}
+        payload = {key: value for key, value in offer.items() if key in fields}
+        payload["group_offers"] = [{key: item.get(key) for key in
+                                    ("article_id", "article_title", "article_price", "article_url", "source", "db_id",
+                                     "product_url", "merchant_item_url", "history", "history_delta", "comparison")}
+                                   for item in offer.get("group_offers", [offer])]
+        with self.connect() as conn:
+            conn.execute('''INSERT INTO deal_assessments (scheme_id, deal_key, payload, status)
+                VALUES (?, ?, ?, 'pending') ON CONFLICT(scheme_id, deal_key) DO UPDATE SET
+                payload=excluded.payload, status='pending', created_at=CURRENT_TIMESTAMP, sent_at=NULL''',
+                (scheme_id, offer["alert_key"], json.dumps(payload, ensure_ascii=False)))
+
+    def pending_deal_assessments(self, scheme_id: int, limit: int = 20) -> List[Dict]:
+        with self.connect() as conn:
+            rows = conn.execute('''SELECT payload FROM deal_assessments
+                WHERE scheme_id=? AND status='pending' ORDER BY id LIMIT ?''', (scheme_id, limit)).fetchall()
+            return [json.loads(row[0]) for row in rows]
+
+    def mark_deal_assessment_sent(self, scheme_id: int, deal_key: str) -> None:
+        with self.connect() as conn:
+            conn.execute('''UPDATE deal_assessments SET status='sent', sent_at=CURRENT_TIMESTAMP
+                WHERE scheme_id=? AND deal_key=?''', (scheme_id, deal_key))
+
+    def list_deal_assessments(self, scheme_id: int, limit: int = 30) -> List[Dict]:
+        with self.connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute('''SELECT id, deal_key, payload, status, created_at, sent_at
+                FROM deal_assessments WHERE scheme_id=? ORDER BY id DESC LIMIT ?''',
+                (scheme_id, min(max(limit, 1), 100))).fetchall()
+            result = []
+            for row in rows:
+                item = dict(row)
+                item["assessment"] = json.loads(item.pop("payload"))
+                result.append(item)
+            return result
     
     def get_recent_products(self, scheme_id: int, limit: int = 50) -> List[Dict]:
         """获取最近的商品记录"""
@@ -329,11 +556,16 @@ class DatabaseManager:
             ''', (scheme_id, limit))
             return [dict(row) for row in cursor.fetchall()]
 
-    def has_keyword_history(self, keyword_id: int) -> bool:
+    def has_keyword_history(self, keyword_id: int, source: str = None) -> bool:
         """检查关键词是否已有商品历史。"""
         with self.connect() as conn:
             cursor = conn.cursor()
-            cursor.execute('SELECT 1 FROM product_history WHERE keyword_id = ? LIMIT 1', (keyword_id,))
+            if source == 'manmanbuy':
+                cursor.execute("SELECT 1 FROM product_history WHERE keyword_id = ? AND article_id LIKE 'manmanbuy:%' LIMIT 1", (keyword_id,))
+            elif source == 'smzdm':
+                cursor.execute("SELECT 1 FROM product_history WHERE keyword_id = ? AND article_id NOT LIKE 'manmanbuy:%' LIMIT 1", (keyword_id,))
+            else:
+                cursor.execute('SELECT 1 FROM product_history WHERE keyword_id = ? LIMIT 1', (keyword_id,))
             return cursor.fetchone() is not None
     
     def mark_as_notified(self, product_id: int) -> bool:
@@ -441,6 +673,15 @@ class DatabaseManager:
             'host': host,
             'port': int(port)
         }
+
+    def get_bark_config(self, scheme_id: Optional[int] = None) -> dict:
+        """Resolve a complete scheme override or the global Bark configuration."""
+        if scheme_id is not None:
+            scheme = self.get_scheme(scheme_id)
+            if scheme and scheme.get("bark_config"):
+                return json.loads(scheme["bark_config"])
+        return json.loads(self.get_config("bark_config") or "{}")
+
 
 if __name__ == "__main__":
     # 测试数据库

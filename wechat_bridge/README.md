@@ -1,6 +1,6 @@
 # SMZDM WeChat Bridge
 
-This is a small HTTP bridge built on top of `fastclaw-ai/weclaw`. It keeps WeClaw's login and credential storage, then adds `account_id` routing so SMZDM Monitor can send messages through a selected WeChat account.
+This is a small HTTP bridge built on top of `fastclaw-ai/weclaw`. It keeps WeClaw's login and credential storage, then adds `account_id` routing so 好价雷达 can send messages through a selected WeChat account.
 
 ## Build
 
@@ -26,7 +26,7 @@ The bridge uses WeClaw's credential storage. Scan a QR code to bind your WeChat 
 go install github.com/fastclaw-ai/weclaw@latest
 ```
 
-Or use the built-in QR login from the SMZDM Monitor frontend (`POST /api/wechat/login/start`).
+Or use the built-in QR login from the 好价雷达 frontend (`POST /api/wechat/login/start`).
 
 WeClaw stores credentials under:
 
@@ -106,7 +106,7 @@ Content-Type: application/json
 
 {
   "conversation_id": "selected-account-id:user@im.wechat",
-  "text": "SMZDM Monitor test",
+  "text": "好价雷达测试",
   "media_path": "D:\\path\\to\\data\\images\\example.jpg"
 }
 ```
@@ -124,4 +124,4 @@ Rules:
 - Single-account mode: only one WeChat account is active at a time.
 - Session expiry detection: when send errors contain `ret=-14` or `session expired`, the account status is updated to `session_expired`. When `ret=-2` is detected, status becomes `error`.
 - It does not replace WeClaw's credential format.
-- It only exposes the HTTP bridge needed by SMZDM Monitor.
+- It only exposes the HTTP bridge needed by 好价雷达.

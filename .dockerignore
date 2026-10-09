@@ -1,0 +1,20 @@
+.git
+.venv
+node_modules
+frontend
+wechat_bridge
+data
+logs
+__pycache__
+**/__pycache__
+*.db
+.env
+artifacts
+
+# Optional AI client components are not needed by the server image.
+mcp
+skills
+# Development and deployment documentation are not runtime inputs.
+tests
+docs
+deployment

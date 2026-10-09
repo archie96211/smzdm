@@ -10,12 +10,14 @@ import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from "@/components/ui/select";
 import { useGlobalSettings } from "@/helpers/api";
+import SourcePicker from "./SourcePicker";
 
 const DEFAULT_SCHEME = {
-  name: "", keyword: "", refresh_interval: 60,
+  name: "", keyword: "", keyword_source: "smzdm", refresh_interval: 60,
   dingtalk_webhook: "", dingtalk_secret: "",
   wechat_enabled: false, wechat_account_id: "", wechat_targets: "",
   wxpusher_enabled: false, wxpusher_app_token: "", wxpusher_uid: "",
+  bark_enabled: false,
   is_active: true,
 };
 
@@ -71,6 +73,7 @@ export default function SchemeModal({ mode, initial, onSubmit, onClose, wechatCo
       payload.keyword = String(form.keyword || "").trim();
     } else {
       delete payload.keyword;
+      delete payload.keyword_source;
     }
     onSubmit(payload);
   }
@@ -96,6 +99,8 @@ export default function SchemeModal({ mode, initial, onSubmit, onClose, wechatCo
               <Label>关键词</Label>
               <Input required pattern=".*\S.*" value={form.keyword || ""}
                 onChange={(e) => setForm({ ...form, keyword: e.target.value })} />
+              <Label>好价来源</Label>
+              <SourcePicker value={form.keyword_source} onChange={(v) => setForm({ ...form, keyword_source: v })} />
             </div>
           )}
           <div className="col-span-2 flex items-center gap-3">
@@ -181,6 +186,12 @@ export default function SchemeModal({ mode, initial, onSubmit, onClose, wechatCo
               )}
             </div>
           )}
+          <div className="col-span-2 flex items-center gap-3">
+            <Switch checked={Boolean(form.bark_enabled)}
+              onCheckedChange={(value) => setForm({ ...form, bark_enabled: value })} id="bark" />
+            <Label htmlFor="bark">启用 Bark 通知</Label>
+          </div>
+          <p className="col-span-2 text-xs text-muted-foreground">Bark 默认使用全局配置；保存方案后可在通知配置中单独调整。</p>
           <DialogFooter className="col-span-2 mt-2">
             <Button type="button" variant="outline" onClick={onClose}>取消</Button>
             <Button type="submit">保存</Button>
