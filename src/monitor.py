@@ -9,6 +9,7 @@ import time
 import re
 import logging
 import os
+from decimal import Decimal
 from datetime import datetime
 from html import unescape
 from typing import List, Dict, Optional
@@ -17,10 +18,12 @@ from .bark_notifier import BarkConfig, BarkNotifier
 from .database import DatabaseManager
 from .dingtalk_notifier import DingTalkNotifier
 from .image_cache import ImageCache
+from .manmanbuy_deals import fetch_deals as fetch_manmanbuy_deals
 from .network_utils import is_public_host as host_is_public, is_public_url as url_is_public
 from .wechat_notifier import WeChatNotifier
 from .wxpusher_notifier import WxPusherNotifier
 from . import runtime
+from .deal_pipeline import prepare_alerts
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +41,12 @@ class SMZDMMonitor:
         self.image_cache = ImageCache(db_path=db_path)
         self.api_base_url = os.getenv("SMZDM_API_BASE_URL", "https://api.smzdm.com/v1/list")
         self.fetch_metrics = {"requests": 0, "successes": 0, "failures": 0, "response_bytes": 0, "last": {}}
+        self.fetch_metrics["manmanbuy"] = {"requests": 0, "successes": 0, "failures": 0, "last": {}}
         self.fetch_backoff = {}
         self.running = False
         self.tasks = {}
         self._wechat_alert_sent = False
+        self.history_connection = None
         try:
             self.max_concurrency = max(1, int(os.getenv("SMZDM_MONITOR_CONCURRENCY", "3")))
         except ValueError:
@@ -246,26 +251,45 @@ class SMZDMMonitor:
     
     async def monitor_keyword(self, session: aiohttp.ClientSession, scheme_id: int, keyword_data: Dict) -> List[Dict]:
         """Monitor one keyword."""
+        sources = ('smzdm', 'manmanbuy') if keyword_data.get('source') == 'both' else (keyword_data.get('source') or 'smzdm',)
+        found = []
+        for source in sources:
+            found.extend(await self.monitor_keyword_source(session, scheme_id, keyword_data, source))
+        return found
+
+    async def monitor_keyword_source(self, session: aiohttp.ClientSession, scheme_id: int,
+                                     keyword_data: Dict, source: str) -> List[Dict]:
+        """Fetch one independent source so a failed source cannot suppress another."""
+        backoff_key = keyword_data['id'] if source == 'smzdm' else (keyword_data['id'], source)
+        source_metric = self.fetch_metrics['manmanbuy'] if source == 'manmanbuy' else None
+        started = time.monotonic()
         try:
-            is_initial_run = not self.db.has_keyword_history(keyword_data['id'])
+            is_initial_run = not self.db.has_keyword_history(keyword_data['id'], source)
             if self.keyword_semaphore is None:
                 self.keyword_semaphore = asyncio.Semaphore(self.max_concurrency)
 
-            failures, retry_at = self.fetch_backoff.get(keyword_data['id'], (0, 0))
+            failures, retry_at = self.fetch_backoff.get(backoff_key, (0, 0))
             if time.monotonic() < retry_at:
                 return []
             async with self.keyword_semaphore:
-                products = await self.fetch_products(
-                    session,
-                    keyword_data['keyword'],
-                    category_id=keyword_data.get('category_id', ''),
-                    brand_id=keyword_data.get('brand_id', ''),
-                    mall_id=keyword_data.get('mall_id', ''),
-                    order_type=keyword_data.get('order_type', 'time'),
-                    limit=20
-                )
+                if source == 'manmanbuy':
+                    source_metric['requests'] += 1
+                    products = await fetch_manmanbuy_deals(session, keyword_data['keyword'])
+                    source_metric['successes'] += 1
+                    source_metric['last'][keyword_data['keyword']] = {
+                        'ok': True, 'rows': len(products),
+                        'elapsed_ms': round((time.monotonic() - started) * 1000, 1)}
+                    if len(source_metric['last']) > 100:
+                        source_metric['last'].pop(next(iter(source_metric['last'])))
+                else:
+                    products = await self.fetch_products(
+                        session, keyword_data['keyword'],
+                        category_id=keyword_data.get('category_id', ''),
+                        brand_id=keyword_data.get('brand_id', ''),
+                        mall_id=keyword_data.get('mall_id', ''),
+                        order_type=keyword_data.get('order_type', 'time'), limit=20)
 
-            self.fetch_backoff.pop(keyword_data["id"], None)
+            self.fetch_backoff.pop(backoff_key, None)
             # Apply user price bounds.
             filtered_products = self.filter_by_price(
                 products,
@@ -284,7 +308,7 @@ class SMZDMMonitor:
                     product['db_id'] = product_id
                     product['matched_keyword'] = keyword_data['keyword']
                     new_products.append(product)
-                    logger.info(f"???????? {product.get('article_title', '')[:50]}...")
+                    logger.info("New %s deal: %s", source, product.get('article_title', '')[:50])
 
             if is_initial_run:
                 logger.info(
@@ -297,10 +321,17 @@ class SMZDMMonitor:
             return new_products
                 
         except Exception as e:
-            failures = self.fetch_backoff.get(keyword_data['id'], (0, 0))[0] + 1
+            if source_metric is not None:
+                source_metric['failures'] += 1
+                source_metric['last'][keyword_data['keyword']] = {
+                    'ok': False, 'error': type(e).__name__,
+                    'elapsed_ms': round((time.monotonic() - started) * 1000, 1)}
+                if len(source_metric['last']) > 100:
+                    source_metric['last'].pop(next(iter(source_metric['last'])))
+            failures = self.fetch_backoff.get(backoff_key, (0, 0))[0] + 1
             delay = min(3600, 60 * 2 ** min(failures - 1, 6))
-            self.fetch_backoff[keyword_data['id']] = (failures, time.monotonic() + delay)
-            logger.warning("Keyword %s failed; retry no sooner than %ss: %s", keyword_data['keyword'], delay, e)
+            self.fetch_backoff[backoff_key] = (failures, time.monotonic() + delay)
+            logger.warning("Keyword %s source %s failed; retry no sooner than %ss: %s", keyword_data['keyword'], source, delay, e)
             return []
     async def monitor_scheme(self, scheme_id: int):
         """Monitor one scheme."""
@@ -344,8 +375,15 @@ class SMZDMMonitor:
                     if not self.running or scheme_id not in self.tasks:
                         break
 
-                    if all_new_products and (scheme.get('dingtalk_webhook') or scheme.get('wechat_enabled') or scheme.get('wxpusher_enabled') or scheme.get('bark_enabled')):
-                        await self.send_notifications(scheme, all_new_products)
+                    if scheme.get('dingtalk_webhook') or scheme.get('wechat_enabled') or scheme.get('wxpusher_enabled') or scheme.get('bark_enabled'):
+                        if all_new_products:
+                            alerts = await prepare_alerts(self.db, session, scheme_id, all_new_products,
+                                                          self.history_connection)
+                            for alert in alerts:
+                                self.db.save_deal_assessment(scheme_id, alert)
+                        pending = self.db.pending_deal_assessments(scheme_id)
+                        if pending:
+                            await self.send_notifications(scheme, pending)
 
                     if not self.running or scheme_id not in self.tasks:
                         break
@@ -392,15 +430,60 @@ class SMZDMMonitor:
                     article_url = product.get('article_url', '')
                     pic_url = self.get_product_image_url(product)
 
-                    card_title = f"{scheme['name']} 发现新好价"
+                    source_label = "慢慢买" if product.get('source') == 'manmanbuy' else "什么值得买"
+                    group = product.get('group_offers') or [product]
+                    source_labels = list(dict.fromkeys(
+                        '慢慢买' if item.get('source') == 'manmanbuy' or str(item.get('article_id', '')).startswith('manmanbuy:')
+                        else '什么值得买' for item in group))
+                    source_label = '、'.join(source_labels)
+                    card_title = f"{scheme['name']} 发现新好价 · {source_label}"
                     message_parts = [
                         f"### {product_title}",
                         "",
                         f"- **价格**: {price_text}",
                         f"- **商城**: {mall}",
+                        f"- **来源**: {source_label}",
                     ]
                     if product_time:
-                        message_parts.append(f"- **SMZDM时间**: {product_time}")
+                        message_parts.append(f"- **发布时间**: {product_time}")
+                    extra_start = len(message_parts)
+                    history = product.get('history') or {}
+                    if history.get('has_history') and history.get('lowest_price') is not None:
+                        message_parts.append(f"- **慢慢买历史低价**: ¥{history['lowest_price']}"
+                                             + (f"（{str(history['lowest_date']).split('T')[0]}）" if history.get('lowest_date') else ""))
+                        if product.get('history_delta') is not None:
+                            delta = Decimal(product['history_delta'])
+                            relation = '高于' if delta > 0 else '低于' if delta < 0 else '持平'
+                            message_parts.append(f"- **与历史低价**: {relation} ¥{abs(delta):.2f}（按当前交易总价核算）")
+                            message_parts.append("- 历史记录的优惠条件可能不同，差额仅供参考")
+                    elif product.get('product_url'):
+                        message_parts.append("- **历史价格**: 可在 AI 对话中按需查询")
+                    else:
+                        message_parts.append("- **历史价格**: 尚未取得可确认的商品直达链接")
+                    comparison = product.get('comparison') or {}
+                    calculation = comparison.get('calculated_price') or {}
+                    if calculation.get('price_per_package'):
+                        qualifier = '预估' if comparison.get('confidence') == 'estimated' else '有据'
+                        message_parts.append(f"- **模型解析、本地核算（{qualifier}）**: 总价 ¥{calculation['total_price']}，¥{calculation['price_per_package']}/包装"
+                                             + (f"；¥{calculation['unit_price']}/{comparison.get('unit') or '单位'}"
+                                                if calculation.get('unit_price') else ""))
+                    if comparison.get('conditions'):
+                        message_parts.append(f"- **优惠条件**: {comparison['conditions']}")
+                    if comparison.get('purchase'):
+                        owned = comparison['purchase']
+                        relation = '同款' if comparison.get('relation') == 'exact' else '同类参考'
+                        message_parts.append(f"- **我买过（{relation}）**: {comparison['owned_name']} "
+                                             f"¥{owned['price_per_unit']}/{comparison['owned_unit']}")
+                    conclusion = comparison.get('conclusion') or {}
+                    if conclusion.get('note'):
+                        message_parts.append(f"- **综合判断**: {conclusion['note']}")
+                    if len(group) > 1:
+                        message_parts.append(f"- **合并来源**: {len(group)} 条报价")
+                        for grouped_offer in group[:3]:
+                            if grouped_offer.get('article_url'):
+                                label = '慢慢买' if str(grouped_offer.get('article_id', '')).startswith('manmanbuy:') else '什么值得买'
+                                message_parts.append(f"- **{label}原文**: {grouped_offer['article_url']}")
+                    extra_lines = message_parts[extra_start:]
                     message_parts.append(f"- **发送时间**: {sent_time}")
                     message_parts.append("")
 
@@ -447,9 +530,11 @@ class SMZDMMonitor:
                             product_title,
                             f"价格: {price_text}",
                             f"商城: {mall}",
-                            f"SMZDM时间: {product_time}" if product_time else "",
+                            f"发布时间: {product_time}" if product_time else "",
+                            f"来源: {source_label}",
                             f"发送时间: {sent_time}",
                             f"链接: {article_url}" if article_url else "",
+                            *[line.replace('**', '').replace('- ', '') for line in extra_lines],
                         ]).strip()
                         success = await self.wechat_notifier.send_message(
                             conversation_id=str(scheme.get('wechat_targets') or ''),
@@ -507,8 +592,9 @@ class SMZDMMonitor:
                         try:
                             bark_config = BarkConfig.model_validate(self.db.get_bark_config(scheme['id']))
                             bark_body = "\n".join(filter(None, [
-                                f"价格: {price_text}", f"商城: {mall}",
+                                f"价格: {price_text}", f"商城: {mall}", f"来源: {source_label}",
                                 f"发布时间: {product_time}" if product_time else "",
+                                *[line.replace('**', '').replace('- ', '') for line in extra_lines],
                             ]))
                             success = await self.bark_notifier.send_message(
                                 bark_config, product_title, bark_body,
@@ -526,7 +612,12 @@ class SMZDMMonitor:
                         sent_success = sent_success or success
 
                     if sent_success:
-                        self.db.mark_as_notified(product.get('db_id'))
+                        for grouped_offer in group:
+                            self.db.mark_as_notified(grouped_offer.get('db_id'))
+                        if product.get('alert_key'):
+                            self.db.record_deal_alert(scheme['id'], product['alert_key'],
+                                                      product.get('alert_price_cents'), product.get('alert_terms', ''))
+                            self.db.mark_deal_assessment_sent(scheme['id'], product['alert_key'])
                         logger.info("Product notification sent: %s", product_title[:30])
                     else:
                         logger.error("Product notification failed: %s", product_title[:30])
@@ -649,5 +740,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-

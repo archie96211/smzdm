@@ -8,10 +8,11 @@ import { Label } from "@/components/ui/label";
 import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from "@/components/ui/select";
+import SourcePicker from "./SourcePicker";
 
 const DEFAULT_KEYWORD = {
   keyword: "", category_id: "", brand_id: "", mall_id: "",
-  order_type: "time", price_min: 0, price_max: 999999,
+  order_type: "time", price_min: 0, price_max: 999999, source: "smzdm",
 };
 
 export default function KeywordModal({ mode, initial, onSubmit, onClose }) {
@@ -34,6 +35,10 @@ export default function KeywordModal({ mode, initial, onSubmit, onClose }) {
             <Label>关键词</Label>
             <Input required pattern=".*\S.*" value={form.keyword}
               onChange={(e) => setForm({ ...form, keyword: e.target.value })} />
+          </div>
+          <div className="col-span-2 grid gap-2">
+            <Label>好价来源</Label>
+            <SourcePicker value={form.source || "smzdm"} onChange={(v) => setForm({ ...form, source: v })} />
           </div>
           <div className="grid gap-2">
             <Label>排序方式</Label>

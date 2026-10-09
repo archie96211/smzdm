@@ -224,3 +224,11 @@ export function useTestBark(schemeId) {
     mutationFn: (payload) => apiRequest(`/api/test-bark${suffix}`, { method: 'POST', body: JSON.stringify(payload) }),
   });
 }
+
+export function useManmanbuyStatus() {
+  return useQuery({
+    queryKey: ['manmanbuy-status'],
+    queryFn: () => apiRequest('/api/manmanbuy/status'),
+    refetchInterval: 60000,
+  });
+}

@@ -1,0 +1,6 @@
+interface:
+  display_name: "好价雷达"
+  short_description: "通过 MCP 管理好价监控方案、关键词、价格条件与通知，核验真实运行状态"
+  default_prompt: "使用 $smzdm-monitor 帮我配置并检查商品好价监控。"
+policy:
+  allow_implicit_invocation: true

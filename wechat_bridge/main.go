@@ -599,7 +599,7 @@ func (s *bridgeServer) handleTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.TrimSpace(req.Text) == "" {
-		req.Text = "SMZDM Monitor 微信通知测试"
+		req.Text = "好价雷达微信通知测试"
 	}
 	s.send(w, r, req)
 }
@@ -990,7 +990,7 @@ func (s *bridgeServer) recordConversation(ctx context.Context, account *accountC
 	s.persistConversations()
 
 	if isNew && msg.ContextToken != "" {
-		_ = messaging.SendTextReply(ctx, account.client, userID, "SMZDM Monitor 已记录这个微信会话，可以在管理页选择它接收通知。", msg.ContextToken, "")
+		_ = messaging.SendTextReply(ctx, account.client, userID, "好价雷达已记录这个微信会话，可以在管理页选择它接收通知。", msg.ContextToken, "")
 	}
 }
 

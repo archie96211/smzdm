@@ -128,7 +128,7 @@ export default function BarkModal({ schemeId, onClose }) {
                 <p className="text-xs text-muted-foreground">直接粘贴 Bark App 复制的完整推送地址，包含设备 Key，支持自建服务。地址仅用于发送，不会回显；修改分组等选项时可留空。</p>
                 {form.has_device_key && <p className="text-xs text-muted-foreground">已配置服务：{form.server_url} · 设备 Key 已隐藏</p>}
                 {clearKey("device_key", "清除已保存的推送凭据")}
-                {textField("group", "通知分组", "SMZDM · {scheme}")}
+                {textField("group", "通知分组", "好价雷达 · {scheme}")}
                 <p className="text-xs text-muted-foreground">分组与复制内容支持 {"{scheme}、{mall}、{keyword}、{url}"} 占位符。留空分组则不指定分组。</p>
                 {textField("icon", "通知图标 URL", "https://example.com/icon.png")}
                 <p className="text-xs text-muted-foreground">iOS 15+ 支持；同一 URL 会被 Bark 缓存，更新图标时请更换 URL。</p>

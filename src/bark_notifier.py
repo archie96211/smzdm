@@ -23,7 +23,7 @@ SECRET_FIELDS = ("device_key", "encryption_key")
 class BarkConfig(BaseModel):
     server_url: str = "https://api.day.app"
     device_key: str = Field(default="", max_length=512)
-    group: str = Field(default="SMZDM · {scheme}", max_length=200)
+    group: str = Field(default="好价雷达 · {scheme}", max_length=200)
     icon: str = Field(default="", max_length=2048)
     image_enabled: bool = False
     sound: str = Field(default="", max_length=100)

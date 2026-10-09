@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-什么值得买好价监控系统 - 钉钉通知模块
+好价雷达 - 钉钉通知模块
 """
 
 import aiohttp
@@ -241,7 +241,7 @@ class DingTalkNotifier:
             message = {
                 "msgtype": "text",
                 "text": {
-                    "content": "🧪 什么值得买监控系统测试消息\n\n这是一条测试消息，用于验证钉钉机器人配置是否正确。\n\n如果您收到此消息，说明配置成功！"
+                    "content": "🧪 好价雷达测试消息\n\n这是一条测试消息，用于验证钉钉机器人配置是否正确。\n\n如果您收到此消息，说明配置成功！"
                 }
             }
             

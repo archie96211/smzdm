@@ -8,7 +8,7 @@ import logging
 import os
 import ipaddress
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -27,7 +27,7 @@ from .wxpusher_notifier import WxPusherNotifier
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="什么值得买好价监控系统", version="2.0.0")
+app = FastAPI(title="好价雷达", version="2.0.0")
 
 db = DatabaseManager(str(runtime.get_database_path()))
 notifier = DingTalkNotifier()
@@ -44,6 +44,7 @@ class SchemeCreate(BaseModel):
     name: str
     description: str = ""
     keyword: str = ""
+    keyword_source: Literal["smzdm", "manmanbuy", "both"] = "smzdm"
     refresh_interval: int = Field(default=300, ge=60, le=86400)
     dingtalk_webhook: str = ""
     dingtalk_secret: str = ""
@@ -74,6 +75,7 @@ class SchemeUpdate(BaseModel):
 
 class KeywordCreate(BaseModel):
     keyword: str
+    source: Literal["smzdm", "manmanbuy", "both"] = "smzdm"
     category_id: str = ""
     brand_id: str = ""
     mall_id: str = ""
@@ -84,6 +86,7 @@ class KeywordCreate(BaseModel):
 
 class KeywordUpdate(BaseModel):
     keyword: Optional[str] = None
+    source: Optional[Literal["smzdm", "manmanbuy", "both"]] = None
     category_id: Optional[str] = None
     brand_id: Optional[str] = None
     mall_id: Optional[str] = None
@@ -102,7 +105,7 @@ class TestWeChatRequest(BaseModel):
     account_id: str = ""
     conversation_id: str = ""
     targets: str = ""
-    text: str = "SMZDM Monitor WeChat test"
+    text: str = "好价雷达微信通知测试"
     media_url: str = ""
     media_path: str = ""
 
@@ -411,7 +414,7 @@ async def read_root():
     if html_path.exists():
         return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
     return HTMLResponse(
-        content="<html><body><h1>SMZDM Monitor</h1><p>前端资源尚未构建，请运行 npm run build。</p></body></html>"
+        content="<html><body><h1>好价雷达</h1><p>前端资源尚未构建，请运行 npm run build。</p></body></html>"
     )
 
 
@@ -427,6 +430,8 @@ async def get_scheme(scheme_id: int):
         raise HTTPException(status_code=404, detail="方案不存在")
     scheme["keywords"] = db.get_keywords(scheme_id)
     scheme["recent_products"] = db.get_recent_products(scheme_id, 50)
+    from .deal_groups import group_offers
+    scheme["recent_product_groups"] = group_offers(scheme["recent_products"])
     scheme["notification_stats"] = db.get_notification_stats(scheme_id)
     return {"success": True, "data": _public_scheme(scheme)}
 
@@ -457,7 +462,7 @@ async def create_scheme(scheme: SchemeCreate):
             wxpusher_app_token=scheme.wxpusher_app_token.strip(),
             wxpusher_uid=scheme.wxpusher_uid.strip(),
         )
-        db.add_keyword(scheme_id, initial_keyword)
+        db.add_keyword(scheme_id, initial_keyword, source=scheme.keyword_source)
         await send_scheme_configured_notice(scheme_id)
         if monitor.running and monitor_task and not monitor_task.done():
             await monitor.restart_scheme(scheme_id)
@@ -520,6 +525,7 @@ async def add_keyword(scheme_id: int, keyword: KeywordCreate):
             order_type=keyword.order_type,
             price_min=keyword.price_min,
             price_max=keyword.price_max,
+            source=keyword.source,
         )
         if monitor.running and scheme_id not in monitor.tasks:
             await monitor.restart_scheme(scheme_id)
@@ -635,7 +641,7 @@ async def test_wechat(request: TestWeChatRequest):
             "account_id": request.account_id.strip(),
             "conversation_id": request.conversation_id.strip(),
             "targets": request.targets.strip(),
-            "text": request.text.strip() or "SMZDM Monitor WeChat test",
+            "text": request.text.strip() or "好价雷达微信通知测试",
             "media_url": request.media_url.strip(),
             "media_path": request.media_path.strip(),
         })
@@ -729,7 +735,7 @@ async def startup_event():
     configure_image_server_defaults()
     if os.getenv("SMZDM_WECHAT_BRIDGE_ENABLED", "true").lower() == "true":
         await wechat_bridge.start()
-    logger.info("SMZDM Web server started at %s", runtime.get_server_base_url())
+    logger.info("好价雷达 Web server started at %s", runtime.get_server_base_url())
     if auto_start_monitor:
         auto_start_task = asyncio.create_task(_auto_start_monitor_later(), name="smzdm-monitor-auto-start")
 
@@ -737,7 +743,7 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     global auto_start_task
-    logger.info("SMZDM Web server shutting down")
+    logger.info("好价雷达 Web server shutting down")
     if auto_start_task and not auto_start_task.done():
         auto_start_task.cancel()
         await asyncio.gather(auto_start_task, return_exceptions=True)
@@ -745,6 +751,18 @@ async def shutdown_event():
     await _stop_monitor_task()
     await notifier.close()
     await wechat_bridge.stop()
+
+
+from .automation_api import install as install_automation_api
+import sys
+install_automation_api(app, sys.modules[__name__])
+
+from .manmanbuy import install as install_manmanbuy
+manmanbuy_connection = install_manmanbuy(app, runtime.get_data_dir(), db)
+monitor.history_connection = manmanbuy_connection
+
+from .purchase_ledger import install as install_purchase_ledger
+install_purchase_ledger(app, db)
 
 
 if __name__ == "__main__":

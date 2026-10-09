@@ -78,3 +78,7 @@ zdm/
 
 # Local environment may be relocated via symlink
 .venv
+
+# Versioned MCP tests (override legacy test file exclusion)
+!mcp/tests/
+!mcp/tests/*.py

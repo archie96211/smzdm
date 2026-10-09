@@ -63,7 +63,7 @@ class DesktopApi:
 
     def getAppInfo(self) -> dict:
         return {
-            "name": "什么值得买好价监控",
+            "name": "好价雷达",
             "version": "2.0.0",
             "serverUrl": self.controller.url,
             "dataDir": str(runtime.get_data_dir()),
@@ -231,7 +231,7 @@ class DesktopController:
         patch_pywebview_winforms_message_loop()
         api = DesktopApi(self)
         self.window = webview.create_window(
-            "什么值得买好价监控",
+            "好价雷达",
             self.url,
             js_api=api,
             width=1240,
@@ -260,7 +260,7 @@ class DesktopController:
         logger.warning("%s，已打开浏览器兜底：%s", reason, self.url)
         try:
             if self.tray_icon:
-                self.tray_icon.notify(f"{reason}，已改用浏览器打开管理页。", "SMZDM Monitor")
+                self.tray_icon.notify(f"{reason}，已改用浏览器打开管理页。", "好价雷达")
         except Exception:
             logger.debug("系统托盘通知不可用", exc_info=True)
         webbrowser.open(self.url)
@@ -281,7 +281,7 @@ class DesktopController:
         logger.warning("PyWebView loaded event was not received within %.1fs. Keeping the embedded window active.", timeout)
         try:
             if self.tray_icon:
-                self.tray_icon.notify("内置窗口仍在运行；如页面空白，可从托盘选择“浏览器打开管理页”。", "SMZDM Monitor")
+                self.tray_icon.notify("内置窗口仍在运行；如页面空白，可从托盘选择“浏览器打开管理页”。", "好价雷达")
         except Exception:
             logger.debug("系统托盘通知不可用", exc_info=True)
 
@@ -316,7 +316,7 @@ class DesktopController:
                 logger.debug("隐藏窗口失败", exc_info=True)
         if show_notice and self.tray_icon:
             try:
-                self.tray_icon.notify("程序已隐藏到托盘，监控仍在后台运行。", "SMZDM Monitor")
+                self.tray_icon.notify("程序已隐藏到托盘，监控仍在后台运行。", "好价雷达")
             except Exception:
                 logger.debug("系统托盘通知不可用", exc_info=True)
 
@@ -333,7 +333,7 @@ class DesktopController:
                 time.sleep(0.05)
                 self.window.restore()
                 time.sleep(0.05)
-                bring_window_to_front("什么值得买好价监控")
+                bring_window_to_front("好价雷达")
                 logger.info("Window restored from tray")
             except Exception:
                 logger.debug("显示窗口失败", exc_info=True)
@@ -408,7 +408,7 @@ class DesktopController:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("退出", lambda icon, item: self.quit()),
         )
-        self.tray_icon = pystray.Icon("smzdm_monitor", image, "什么值得买好价监控", menu)
+        self.tray_icon = pystray.Icon("smzdm_monitor", image, "好价雷达", menu)
         self.tray_icon.run_detached()
         logger.info("Tray icon started")
 
@@ -568,7 +568,7 @@ def run_server_mode(host: str, port: int, auto_start_monitor: bool, debug: bool 
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="SMZDM Monitor desktop app")
+    parser = argparse.ArgumentParser(description="好价雷达桌面应用")
     parser.add_argument("--debug", action="store_true", help="Enable pywebview dev tools and verbose backend logs")
     parser.add_argument("--browser", action="store_true", help="Open the management UI in the default browser")
     parser.add_argument("--webview", action="store_true", help="Use the embedded PyWebView window instead of the default browser")

@@ -10,3 +10,11 @@ __pycache__
 *.db
 .env
 artifacts
+
+# Optional AI client components are not needed by the server image.
+mcp
+skills
+# Development and deployment documentation are not runtime inputs.
+tests
+docs
+deployment
